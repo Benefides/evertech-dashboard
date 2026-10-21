@@ -1,0 +1,37 @@
+# Render Blueprint: Render → New → Blueprint → pick this repo. It creates the web service with these settings
+# and asks for the values marked sync: false (Odoo login, API key, dashboard password).
+services:
+  - type: web
+    name: evertech-dashboard
+    runtime: node
+    plan: starter              # always on; "free" sleeps when idle (30 s wake-up), bad for a TV screen
+    region: frankfurt          # or singapore; both are close to the UAE
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /
+    autoDeploy: true           # every push to the repo goes live
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: ODOO_URL
+        value: https://evertech-it-infrastructure-llc.odoo.com
+      - key: ODOO_DB
+        value: evertech-it-infrastructure-llc
+      - key: ODOO_LOGIN
+        sync: false
+      - key: ODOO_API_KEY
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: TV_TOKEN          # meeting-room screen: open https://<your-site>/tv/<TV_TOKEN>
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "1"
+      - key: TRUST_PROXY
+        value: "1"
+      - key: DASHBOARD_TZ
+        value: Asia/Dubai
+      - key: CACHE_MINUTES
+        value: "10"
