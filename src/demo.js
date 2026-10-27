@@ -147,7 +147,42 @@ function dataset() {
     if (o) o.opportunityId = ld.id;
   }
 
-  return { source: 'demo', currency: { name: 'AED', symbol: 'AED' }, companies, teams,
+  // customer invoices: invoiced a few days after the order, 30-day terms, 5% VAT; older ones mostly paid, recent ones partly open
+  const areas = ['Business Bay', 'Dubai Marina', 'Al Barsha', 'DIFC', 'JLT', 'Deira', 'Al Quoz', 'Sharjah', 'Abu Dhabi', 'Dubai Silicon Oasis'];
+  const towers = ['Crescent Tower', 'Palm View Building', 'Gulf Business Centre', 'Al Noor Building', 'Harbour Point', 'Oasis Plaza', 'Sunrise Tower'];
+  const partners = Object.fromEntries(customers.map((c, i) => [c.id, { name: c.name, street: `${['Office', 'Suite', 'B'][i % 3]} ${101 + ((i * 137) % 1900)}, ${towers[i % towers.length]}`,
+    street2: '', city: areas[i % areas.length], state: '', zip: '', country: 'United Arab Emirates', email: '', phone: '', vat: '' }]));
+  const initials = (n) => n.split(/\s+/).map((w) => w[0]).join('').replace(/[^A-Z]/gi, '').slice(0, 3).toUpperCase();
+  const invoices = [];
+  for (const o of orders.filter((x) => x.state === 'sale').sort((a, b) => a.dateOrder.localeCompare(b.dateOrder))) {
+    const billed = lines.filter((l) => l.orderId === o.id).reduce((a, l) => a + (l.invoicedAmount ?? l.subtotal), 0);
+    if (!billed) continue;
+    const d = addDays(new Date(o.dateOrder + 'T00:00:00Z'), Math.floor(between(1, 9)));
+    if (d > today) continue;
+    const due = addDays(d, 30), late = (today - due) / 86400000, p = r();
+    const paid = late > 150 ? true : late > 60 ? p < 0.8 : late > 0 ? p < 0.5 : p < 0.2;
+    const total = Math.round(billed * 1.05 * 100) / 100;
+    invoices.push({ o, date: iso(d), due: iso(due), total, residual: paid ? 0 : r() < 0.15 ? Math.round(total * 0.4 * 100) / 100 : total });
+  }
+  const seq = {};
+  const receivables = [];
+  for (const v of invoices) {
+    const y = v.date.slice(0, 4); seq[y] = (seq[y] || 0) + 1;
+    if (!v.residual) continue;
+    const ps = [...new Set(lines.filter((l) => l.orderId === v.o.id).map((l) => l.product))];
+    receivables.push({ id: 70000 + receivables.length, name: `INV/${y}/${String(seq[y]).padStart(5, '0')}`, type: 'invoice', partnerId: v.o.partnerId, partner: v.o.partner,
+      date: v.date, due: v.due, ref: `${initials(v.o.partner)}-PO-${String(300 + (v.o.id % 700)).padStart(5, '0')}`, origin: v.o.name,
+      product: ps[0] + (ps.length > 1 ? ` + ${ps.length - 1} more` : ''), products: ps, total: v.total, residual: v.residual,
+      userId: v.o.userId, user: v.o.user, teamId: v.o.teamId, companyId: v.o.companyId });
+  }
+  // two open credit notes
+  for (const [i, x] of receivables.filter((v) => v.residual === v.total).slice(-6, -4).entries()) {
+    receivables.push({ ...x, id: 79000 + i, name: `RINV/${x.date.slice(0, 4)}/${String(i + 1).padStart(5, '0')}`, type: 'refund',
+      date: iso(addDays(new Date(x.date + 'T00:00:00Z'), 6)), due: iso(addDays(new Date(x.date + 'T00:00:00Z'), 6)),
+      total: -Math.round(x.total * 0.1), residual: -Math.round(x.total * 0.1), product: 'Credit: returned item' });
+  }
+
+  return { source: 'demo', currency: { name: 'AED', symbol: 'AED' }, companies, teams, receivables, partners, receivablesError: null,
     users: users.map(({ id, name }) => ({ id, name })), stages, orders, lines, leads, activities, hasMargin: true,
     invoiceLines, hasInvoiceAmounts: true, hasOpportunityLink: true,
     licenses: licenses.build(lines, new Map(orders.map((o) => [o.id, o]))) };

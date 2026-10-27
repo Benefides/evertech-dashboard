@@ -111,6 +111,18 @@ app.get('/api/target', wrap(async (req, res) => {
   res.json({ fetchedAt: ds.fetchedAt, currency: ds.currency, ...metrics.targetDetails(ds, filters(req.query)) });
 }));
 
+app.get('/api/receivables', wrap(async (req, res) => {
+  const ds = await data.load();
+  res.json({ fetchedAt: ds.fetchedAt, currency: ds.currency, ...metrics.receivablesDetails(ds, filters(req.query)) });
+}));
+
+app.get('/api/statement', wrap(async (req, res) => {
+  const ds = await data.load();
+  const id = num(req.query.partner);
+  if (!id) return res.status(400).json({ error: 'Which customer? Add ?partner=<id>.' });
+  res.json({ currency: ds.currency, odooUrl: ds.source === 'odoo' ? ds.odooUrl : null, ...metrics.statement(ds, id, filters(req.query)) });
+}));
+
 app.post('/api/refresh', wrap(async (req, res) => {
   if (req.kind === 'tv') return res.status(403).json({ error: 'Read-only screen' });
   odoo.reset();
@@ -135,7 +147,9 @@ app.get('/api/export/:what.csv', wrap(async (req, res) => {
   const tgt = req.params.what === 'opportunities' ? metrics.targetDetails(ds, filters(req.query)) : null;
   const sos = (r) => r.orders.map((o) => `${o.name} (${o.date})`).join('; ');
   const STATUS = { won: 'Won', lost: 'Lost', open: 'Open', late: 'Open, past expected date' };
+  const ar = req.params.what === 'receivables' ? metrics.receivablesDetails(ds, filters(req.query)) : null;
   const sets = {
+    receivables: [ar?.invoices || [], [['Invoice', 'name'], ['Type', (r) => (r.type === 'refund' ? 'Credit note' : 'Invoice')], ['Customer', 'partner'], ['Invoice date', 'date'], ['Order ref.', 'ref'], ['Product', 'product'], ['Salesperson', 'user'], [`Invoice total (${ds.currency.name})`, (r) => r2(r.total)], [`Outstanding (${ds.currency.name})`, (r) => r2(r.residual)], ['Due date', 'due'], ['Days overdue', (r) => r.overdue || '']]],
     'to-invoice': [inv?.orders || [], [['Order', 'name'], ['Order date', 'date'], ['Days since order', 'age'], ['Customer', 'partner'], ['Salesperson', 'user'], ['Sales team', 'team'], [`Order total (${ds.currency.name})`, (r) => r2(r.amount)], [`Invoiced (${ds.currency.name})`, (r) => r2(r.invoiced)], [`To invoice (${ds.currency.name})`, (r) => r2(r.toInvoice)], ['Lines to invoice', (r) => r.lines.map((l) => `${l.product} x ${l.toInvoiceQty ?? l.qty}`).join('; ')]]],
     opportunities: [tgt ? [...tgt.planned.map((r) => ({ ...r, inTarget: 'Yes' })), ...tgt.unplanned.map((r) => ({ ...r, inTarget: 'No (won outside target)' }))] : [],
       [['Opportunity', 'name'], ['Customer', 'partner'], ['Salesperson', 'user'], ['Stage', 'stage'], ['Status', (r) => STATUS[r.status] || r.status], ['In target', 'inTarget'], ['Expected closing', 'deadline'], ['Closed', 'closed'], ['Created', 'created'], [`Expected revenue (${ds.currency.name})`, (r) => r2(r.expected)], ['Probability', (r) => r.probability + '%'], ['Sales orders', sos], [`SO amount (${ds.currency.name})`, (r) => r2(r.orders.reduce((a, o) => a + o.amount, 0))]]],

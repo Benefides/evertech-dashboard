@@ -129,6 +129,8 @@ tr.sub td { background: var(--surface-2); padding-top: 0; }
 table.lines { margin: 0 0 6px; } table.lines th { font-size: 10.5px; padding: 5px 8px; } table.lines td { padding: 6px 8px; font-size: 13px; }
 .late { color: var(--critical-ink); }
 .nowrap { white-space: nowrap; }
+.soa-ico { font-size: 20px; margin-right: 6px; color: var(--ink-2); }
+.btn.disabled { opacity: .45; pointer-events: none; }
 .viz-trend path { fill: none; stroke: var(--ink-2); stroke-width: 1.5; stroke-linejoin: round; opacity: .75; }
 .viz-trend circle { fill: var(--surface); stroke: var(--ink-2); stroke-width: 1.5; }
 .viz-halo { paint-order: stroke; stroke: var(--surface); stroke-width: 4px; stroke-linejoin: round; }

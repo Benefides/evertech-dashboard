@@ -282,6 +282,16 @@ function renderMain() {
       </div>
     </section>
 
+    <section class="section" aria-labelledby="h-ar">
+      <div class="section-head"><h2 id="h-ar">Invoices & receivables</h2><span class="sub">Posted customer invoices not fully paid, as of today · incl. VAT · not affected by the period filter</span></div>
+      ${d.receivables.available ? `<div class="amc-tiles">
+        ${tile('Outstanding', `<span title="${moneyFull(d.receivables.outstanding)}">${money(d.receivables.outstanding)}</span>`, `<span>${int(d.receivables.invoices)} invoices · ${int(d.receivables.customers)} customers</span>`, '', '', viewHref('invoices'))}
+        ${tile('Overdue', money(d.receivables.overdue), d.receivables.overdueCount ? status('critical', `${int(d.receivables.overdueCount)} invoice${d.receivables.overdueCount === 1 ? '' : 's'}`) : status('good', 'None'), '', '', viewHref('invoices'))}
+        ${tile('Due in the next 30 days', money(d.receivables.due30), '<span>not overdue yet</span>', '', '', viewHref('invoices'))}
+        ${tile('Statements of account', '<span class="soa-ico" aria-hidden="true">⎙</span>Print', '<span>per customer, as PDF</span>', '', '', viewHref('invoices'))}
+      </div>` : `<div class="card"><div class="empty">${d.receivables.error ? `Odoo didn't allow reading invoices: ${esc(d.receivables.error)}. Give the dashboard's Odoo user read access to Invoicing (e.g. the "Billing" role).` : 'Invoices are not available in this Odoo database.'}</div></div>`}
+    </section>
+
     <section class="section" aria-labelledby="h-crm">
       <div class="section-head"><h2 id="h-crm">CRM pipeline</h2><span class="sub">Opportunities: won/lost by close date, pipeline = open right now</span></div>
       <div class="tiles crm">
@@ -670,7 +680,83 @@ function renderTarget() {
     cols: oppCols({ k: 'closed', label: 'Won on', html: (r) => `${dmy(r.closed)}<br><small>planned ${dmy(r.deadline)}</small>`, sort: (r) => r.closed }) });
 }
 
-const VIEWS = { revenue: ['/orders', renderDetail], invoice: ['/to-invoice', renderInvoice], target: ['/target', renderTarget] };
+// ---------- invoices & statements of account (opened from the receivables tiles) ----------
+const soaHref = (ids, print = false) => {
+  const s = readState(), q = new URLSearchParams({ partner: [].concat(ids).join(','), back: hashOf(s).slice(1) });
+  if (s.company) q.set('company', s.company); if (print) q.set('print', '1');
+  return '/statement.html?' + q;
+};
+function renderReceivables() {
+  const d = DETAIL;
+  charts.length = 0; lastView = 'invoices'; setSrc(d.fetchedAt);
+  if (!d.available) { $('#main').innerHTML = `${backBar()}<div class="card" style="margin-top:16px"><div class="empty">${d.error ? `Odoo didn't allow reading invoices: ${esc(d.error)}. Give the dashboard's Odoo user read access to Invoicing (e.g. the "Billing" role).` : 'Invoices are not available in this Odoo database.'}</div></div>`; return; }
+  const t = d.total;
+  const odChip = (n) => (n > 0 ? status(n > 90 ? 'critical' : n > 30 ? 'serious' : 'warning', `${int(n)} day${n === 1 ? '' : 's'}`) : '<span class="muted">–</span>');
+  const amount = (v) => (v < 0 ? `<span class="muted">${moneyFull(v)}</span>` : moneyFull(v));
+  const invLink = (r) => `${odooLink('account.move', r.id, r.name)}${r.type === 'refund' ? ' <small>credit note</small>' : ''}`;
+  $('#main').innerHTML = `${backBar()}
+    <section class="section" style="margin-top:16px" aria-labelledby="h-rec">
+      <div class="section-head"><h2 id="h-rec">Invoices & receivables</h2><span class="sub">Posted customer invoices and credit notes not fully paid, as of ${dmy(d.today)} · ${esc(d.currency.name)}, incl. VAT</span></div>
+      <div class="tiles detail">
+        ${tile('Outstanding', `<span title="${moneyFull(t.outstanding)}">${money(t.outstanding)}</span>`, `<span>${int(t.invoices)} invoices · ${int(t.customers)} customers</span>`)}
+        ${tile('Overdue', money(t.overdue), t.overdueCount ? status('critical', `${int(t.overdueCount)} invoice${t.overdueCount === 1 ? '' : 's'}`) : status('good', 'None'))}
+        ${tile('Due in the next 30 days', money(t.due30), '<span>not overdue yet</span>')}
+        ${tile('Customers with a balance', int(d.customers.length), `<span>${int(d.customers.filter((c) => c.overdue > 0).length)} with overdue invoices</span>`)}
+      </div>
+      <div class="grid g2" style="margin-top:14px">
+        <div class="card"><div class="card-head"><div><h3>By age</h3><p>Days past the due date</p></div></div><div class="table-wrap">${breakdownTable(d.ages, 'Age', 10, { valueLabel: 'Outstanding', countLabel: 'Invoices' })}</div></div>
+        <div class="card"><div class="card-head"><div><h3>By salesperson</h3></div></div><div class="table-wrap">${breakdownTable(d.bySalesperson, 'Salesperson', 10, { valueLabel: 'Outstanding', countLabel: 'Invoices', more: 'in the lists below' })}</div></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="card-head"><div><h3>Statements of account</h3><p><span id="c-count"></span> · click a customer to see their invoices</p></div>
+          <div class="tools"><input type="search" id="c-q" class="search" placeholder="Search customer" aria-label="Search customers">
+            <a class="btn sm" id="soa-overdue" target="_blank" rel="noopener" title="One page per customer with overdue invoices">Print all overdue</a></div></div>
+        <div class="table-wrap" id="t-cust"></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="card-head"><div><h3>Open invoices</h3><p id="i-count"></p></div>
+          <div class="tools"><input type="search" id="i-q" class="search" placeholder="Search invoice, customer, order ref." aria-label="Search invoices"><a class="btn sm" href="/api/export/receivables.csv?${filterQuery()}" download>CSV</a></div></div>
+        <div class="seg chips" id="i-chips" role="group" aria-label="Status"><button class="btn sm on" data-f="all" aria-pressed="true">All</button><button class="btn sm" data-f="overdue" aria-pressed="false">Overdue <small>${int(t.overdueCount)}</small></button><button class="btn sm" data-f="notdue" aria-pressed="false">Not due yet</button></div>
+        <div class="table-wrap" id="t-inv"></div>
+      </div>
+    </section>`;
+  const od = d.customers.filter((c) => c.overdue > 0).map((c) => c.id);
+  const all = $('#soa-overdue');
+  if (od.length) all.href = soaHref(od, true); else { all.removeAttribute('href'); all.classList.add('disabled'); all.title = 'No overdue invoices'; }
+  listTable({
+    host: $('#t-cust'), count: $('#c-count'), input: $('#c-q'), rows: d.customers, noun: 'customer', total: (r) => r.outstanding, sortKey: 'outstanding', dir: -1,
+    match: (r) => `${r.name} ${r.invoices.map((i) => `${i.name} ${i.ref}`).join(' ')}`,
+    cols: [
+      { k: 'name', label: 'Customer', cls: 'name', asc: 1, html: (r) => esc(r.name), sort: (r) => r.name },
+      { k: 'count', label: 'Invoices', cls: 'num', html: (r) => int(r.count), sort: (r) => r.count },
+      { k: 'outstanding', label: 'Outstanding', cls: 'num', html: (r) => `<b>${moneyFull(r.outstanding)}</b>`, sort: (r) => r.outstanding },
+      { k: 'overdue', label: 'Overdue', cls: 'num', html: (r) => (r.overdue ? moneyFull(r.overdue) : '<span class="muted">–</span>'), sort: (r) => r.overdue },
+      { k: 'oldest', label: 'Oldest overdue', cls: 'hide-sm', html: (r) => odChip(r.oldest), sort: (r) => r.oldest },
+      { k: 'nextDue', label: 'Next due', cls: 'hide-sm', html: (r) => (r.nextDue ? dmy(r.nextDue) : '<span class="muted">–</span>'), sort: (r) => r.nextDue },
+      { k: 'soa', label: 'Statement', html: (r) => `<a class="btn sm" href="${soaHref(r.id)}" target="_blank" rel="noopener">View</a> <a class="btn sm" href="${soaHref(r.id, true)}" target="_blank" rel="noopener">Print</a>`, sort: (r) => r.outstanding },
+    ],
+    expand: (r) => `<table class="lines"><thead><tr><th>Invoice</th><th>Date</th><th>Order ref.</th><th>Product</th><th class="num">Outstanding</th><th>Due</th><th>Overdue</th></tr></thead><tbody>
+      ${r.invoices.map((i) => `<tr><td class="mono">${invLink(i)}</td><td>${dmy(i.date)}</td><td>${esc(i.ref || '–')}</td><td>${esc(i.product || '–')}</td><td class="num">${amount(i.residual)}</td><td>${dmy(i.due)}</td><td>${odChip(i.overdue)}</td></tr>`).join('')}</tbody></table>`,
+  });
+  for (const r of d.invoices) r.tags = [r.overdue > 0 ? 'overdue' : 'notdue'];
+  listTable({
+    host: $('#t-inv'), count: $('#i-count'), input: $('#i-q'), chips: $('#i-chips'), rows: d.invoices, noun: 'invoice', total: (r) => r.residual, sortKey: 'overdue', dir: -1,
+    match: (r) => `${r.name} ${r.partner} ${r.ref} ${r.origin} ${r.product} ${r.user}`,
+    cols: [
+      { k: 'name', label: 'INV No.', cls: 'mono', asc: 1, html: invLink, sort: (r) => r.name },
+      { k: 'date', label: 'Date', html: (r) => dmy(r.date), sort: (r) => r.date },
+      { k: 'partner', label: 'Customer', cls: 'name', asc: 1, html: (r) => esc(r.partner), sort: (r) => r.partner },
+      { k: 'ref', label: 'Order ref.', cls: 'hide-sm', asc: 1, html: (r) => `${esc(r.ref || '–')}${r.origin && r.origin !== r.ref ? `<br><small>${esc(r.origin)}</small>` : ''}`, sort: (r) => r.ref },
+      { k: 'product', label: 'Product', cls: 'hide-sm', asc: 1, html: (r) => esc(r.product || '–'), sort: (r) => r.product },
+      { k: 'residual', label: 'Outstanding', cls: 'num', html: (r) => `<b>${amount(r.residual)}</b>${r.residual !== r.total ? `<br><small>of ${moneyFull(r.total)}</small>` : ''}`, sort: (r) => r.residual },
+      { k: 'due', label: 'Due date', html: (r) => dmy(r.due), sort: (r) => r.due },
+      { k: 'overdue', label: 'Overdue', html: (r) => odChip(r.overdue), sort: (r) => r.overdue },
+      { k: 'user', label: 'Salesperson', cls: 'hide-sm', asc: 1, html: (r) => esc(r.user), sort: (r) => r.user },
+    ],
+  });
+}
+
+const VIEWS = { revenue: ['/orders', renderDetail], invoice: ['/to-invoice', renderInvoice], target: ['/target', renderTarget], invoices: ['/receivables', renderReceivables] };
 
 // ---------- boot ----------
 async function boot() {

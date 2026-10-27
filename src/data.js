@@ -138,6 +138,43 @@ async function fromOdoo() {
       companyId: byId[a.res_id]?.companyId ?? null, teamId: byId[a.res_id]?.teamId ?? null }));
   }
 
+  // ---- receivables: posted customer invoices / credit notes not fully paid, the customers' addresses and what was invoiced ----
+  // needs the API user to have Invoicing (Billing) read access; without it the dashboard still works and says so
+  let receivables = null, partners = {}, receivablesError = null;
+  try {
+    if (await odoo.hasModel('account.move')) {
+      const mf = await odoo.pick('account.move', ['name', 'move_type', 'partner_id', 'commercial_partner_id', 'invoice_date', 'invoice_date_due', 'ref',
+        'invoice_origin', 'amount_total_signed', 'amount_residual_signed', 'payment_state', 'invoice_user_id', 'team_id', 'company_id']);
+      const mv = await odoo.readAll('account.move', [['move_type', 'in', ['out_invoice', 'out_refund']], ['state', '=', 'posted'],
+        ['payment_state', 'in', ['not_paid', 'partial']]], mf, ctx, 'invoice_date,id');
+      const prods = new Map();
+      if (mv.length) {
+        const ml = await odoo.readAll('account.move.line', [['move_id', 'in', mv.map((m) => m.id)], ['product_id', '!=', false]], ['move_id', 'product_id', 'name'], ctx);
+        for (const l of ml) { const k = m2o(l.move_id).id; if (!prods.has(k)) prods.set(k, []); prods.get(k).push(m2o(l.product_id).name || l.name); }
+      }
+      receivables = mv.filter((m) => Number(m.amount_residual_signed)).map((m) => {
+        const cp = m2o(m.commercial_partner_id).id ? m2o(m.commercial_partner_id) : m2o(m.partner_id);
+        const ps = [...new Set(prods.get(m.id) || [])];
+        return { id: m.id, name: m.name, type: m.move_type === 'out_refund' ? 'refund' : 'invoice', partnerId: cp.id, partner: cp.name,
+          date: day(m.invoice_date), due: day(m.invoice_date_due) || day(m.invoice_date), ref: m.ref || m.invoice_origin || '', origin: m.invoice_origin || '',
+          product: ps.length ? ps[0] + (ps.length > 1 ? ` + ${ps.length - 1} more` : '') : '', products: ps,
+          total: Number(m.amount_total_signed) || 0, residual: Number(m.amount_residual_signed) || 0,
+          userId: m2o(m.invoice_user_id).id, user: m2o(m.invoice_user_id).name || 'Unassigned', teamId: m2o(m.team_id).id, companyId: m2o(m.company_id).id };
+      });
+      const pids = [...new Set(receivables.map((r) => r.partnerId).filter(Boolean))];
+      const pf = await odoo.pick('res.partner', ['name', 'street', 'street2', 'city', 'state_id', 'zip', 'country_id', 'email', 'phone', 'vat']);
+      for (let i = 0; i < pids.length; i += 500) {
+        for (const p of await odoo.call('res.partner', 'read', [pids.slice(i, i + 500)], { fields: pf, context: ctx })) {
+          partners[p.id] = { name: p.name, street: p.street || '', street2: p.street2 || '', city: p.city || '', state: m2o(p.state_id).name, zip: p.zip || '',
+            country: m2o(p.country_id).name, email: p.email || '', phone: p.phone || '', vat: p.vat || '' };
+        }
+      }
+    }
+  } catch (e) {
+    if (!e.odoo) throw e;
+    receivables = null; receivablesError = e.message;
+  }
+
   const teams = (await odoo.readAll('crm.team', [], ['name', 'company_id'], ctx)).map((t) => ({ id: t.id, name: t.name, companyId: m2o(t.company_id).id }));
   const userIds = new Map();
   for (const r of [...orders, ...leads]) if (r.userId) userIds.set(r.userId, r.user);
@@ -148,6 +185,7 @@ async function fromOdoo() {
     users: [...userIds].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name)),
     stages, orders, lines, leads, activities, licenses: licenseRows, hasMargin: soFields.includes('margin'),
     invoiceLines, hasInvoiceAmounts, hasOpportunityLink: soFields.includes('opportunity_id'),
+    receivables, partners, receivablesError,
   };
 }
 

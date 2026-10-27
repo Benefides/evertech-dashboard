@@ -214,7 +214,7 @@ function compute(ds, f) {
     salespeople, stages: stageRows,
     sources: [...src.values()].sort((a, b) => b.value - a.value),
     lostReasons: [...reasons.values()].sort((a, b) => b.value - a.value),
-    closingSoon, target,
+    closingSoon, target, receivables: receivablesSummary(ds, f),
     overdueActivities: acts.sort((a, b) => a.deadline.localeCompare(b.deadline)).slice(0, 10)
       .map((a) => ({ lead: a.lead, user: a.user, summary: a.summary, deadline: a.deadline, daysLate: daysBetween(a.deadline, today), leadId: a.leadId })),
     amc, licenses: licenseRenewals,
@@ -301,4 +301,55 @@ function targetDetails(ds, f) {
     planned: planned.map(row).sort((a, b) => a.deadline.localeCompare(b.deadline) || b.expected - a.expected), unplanned: unplanned.map(row) };
 }
 
-module.exports = { compute, details, invoiceDetails, targetDetails, addDays, addMonths, iso };
+// ---- receivables: posted customer invoices not fully paid, as of today (not tied to the period filter) ----
+const SOA = {
+  email: process.env.SOA_EMAIL || 'accounts@evertechme.com',
+  company: process.env.SOA_COMPANY || 'Evertech',
+  signature: process.env.SOA_SIGNATURE || 'Accounts Department',
+  attn: process.env.SOA_ATTN || 'Accounts Payable',
+  note: process.env.SOA_NOTE || 'Kindly settle the outstanding invoices as per the details provided.',
+};
+function openInvoices(ds, f) {
+  const today = f.today;
+  return (ds.receivables || []).filter(sliceOf(f)).map((r) => ({ ...r, overdue: r.residual > 0 && r.due && r.due < today ? daysBetween(r.due, today) : 0 }));
+}
+function receivablesSummary(ds, f) {
+  if (!ds.receivables) return { available: false, error: ds.receivablesError || null };
+  const rows = openInvoices(ds, f), today = f.today, soon = addDays(today, 30);
+  const od = rows.filter((r) => r.overdue > 0);
+  return { available: true, outstanding: sum(rows, (r) => r.residual), invoices: rows.filter((r) => r.type === 'invoice').length,
+    overdue: sum(od, (r) => r.residual), overdueCount: od.length, customers: new Set(rows.map((r) => r.partnerId)).size,
+    due30: sum(rows.filter((r) => r.residual > 0 && r.due >= today && r.due <= soon), (r) => r.residual) };
+}
+/** Invoices screen: every open invoice, per customer (for statements), by age and by salesperson. */
+function receivablesDetails(ds, f) {
+  if (!ds.receivables) return { available: false, error: ds.receivablesError || null };
+  const rows = openInvoices(ds, f).sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
+  const cust = new Map();
+  for (const r of rows) {
+    const c = cust.get(r.partnerId) || { id: r.partnerId, name: r.partner, count: 0, outstanding: 0, overdue: 0, oldest: 0, nextDue: null, invoices: [] };
+    c.count++; c.outstanding += r.residual; c.invoices.push(r);
+    if (r.overdue > 0) { c.overdue += r.residual; c.oldest = Math.max(c.oldest, r.overdue); }
+    else if (r.residual > 0 && (!c.nextDue || r.due < c.nextDue)) c.nextDue = r.due;
+    cust.set(r.partnerId, c);
+  }
+  const ages = [['Not due yet', -Infinity, 0], ['1–30 days overdue', 1, 30], ['31–60 days overdue', 31, 60], ['61–90 days overdue', 61, 90], ['Over 90 days overdue', 91, Infinity]]
+    .map(([name, a, b]) => { const rs = rows.filter((r) => r.overdue >= a && r.overdue <= b && (b > 0 || r.overdue === 0)); return { name, value: sum(rs, (r) => r.residual), orders: rs.length }; });
+  const people = new Map();
+  for (const r of rows) { const p = people.get(r.user) || { name: r.user, value: 0, orders: 0 }; p.value += r.residual; p.orders++; people.set(r.user, p); }
+  return { available: true, today: f.today, total: receivablesSummary(ds, f), ages: ages.filter((a) => a.orders),
+    bySalesperson: [...people.values()].sort((a, b) => b.value - a.value),
+    customers: [...cust.values()].filter((c) => Math.abs(c.outstanding) > 0.005).sort((a, b) => b.outstanding - a.outstanding), invoices: rows };
+}
+/** Statement of account for one customer: every open invoice and credit note (all salespeople), company filter only. */
+function statement(ds, partnerId, f) {
+  if (!ds.receivables) return { available: false, error: ds.receivablesError || null };
+  const rows = openInvoices(ds, { company: f.company, today: f.today }).filter((r) => r.partnerId === partnerId)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
+  const p = ds.partners[partnerId] || { name: rows[0]?.partner || '' };
+  return { available: true, date: f.today, customer: { id: partnerId, ...p }, soa: SOA,
+    lines: rows.map((r) => ({ id: r.id, name: r.name, type: r.type, date: r.date, ref: r.ref, product: r.product, amount: r.residual, total: r.total, due: r.due, overdue: r.overdue })),
+    total: sum(rows, (r) => r.residual), overdue: sum(rows.filter((r) => r.overdue > 0), (r) => r.residual) };
+}
+
+module.exports = { compute, details, invoiceDetails, targetDetails, receivablesDetails, statement, addDays, addMonths, iso };

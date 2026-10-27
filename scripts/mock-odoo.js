@@ -27,6 +27,13 @@ const DB = {
     source_id: m2o(1, l.source), medium_id: false, lost_reason_id: l.status === 'lost' ? m2o(1, l.lostReason) : false, company_currency: AED })),
   'mail.activity': demo.activities.map((a) => ({ id: a.id, res_model: 'crm.lead', res_id: a.leadId, res_name: a.lead, user_id: m2o(a.userId, a.user),
     summary: a.summary, activity_type_id: m2o(1, 'To-Do'), date_deadline: a.deadline })),
+  'account.move': demo.receivables.map((v) => ({ id: v.id, name: v.name, move_type: v.type === 'refund' ? 'out_refund' : 'out_invoice', state: 'posted',
+    payment_state: v.residual === v.total ? 'not_paid' : 'partial', partner_id: m2o(v.partnerId, v.partner), commercial_partner_id: m2o(v.partnerId, v.partner),
+    invoice_date: v.date, invoice_date_due: v.due, ref: v.ref, invoice_origin: v.origin, amount_total_signed: v.total, amount_residual_signed: v.residual,
+    invoice_user_id: m2o(v.userId, v.user), team_id: m2o(v.teamId, 't'), company_id: m2o(v.companyId, 'c') })),
+  'account.move.line': demo.receivables.flatMap((v, i) => v.products.map((p, k) => ({ id: i * 10 + k + 1, move_id: m2o(v.id, v.name), product_id: m2o(500 + k, p), name: p }))),
+  'res.partner': Object.entries(demo.partners).map(([id, p]) => ({ id: Number(id), name: p.name, street: p.street, street2: false, city: p.city, state_id: false,
+    zip: false, country_id: m2o(1, p.country), email: false, phone: false, vat: false })),
 };
 // one USD order (1,000 USD) to test currency conversion
 const usd = { ...DB['sale.order'].find((o) => o.state === 'sale' && o.date_order.startsWith('2026-10')), id: 99999, name: 'S99999', amount_untaxed: 1000, margin: 200, currency_id: USD, tag_ids: [] };
