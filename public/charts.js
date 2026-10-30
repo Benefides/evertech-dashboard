@@ -93,19 +93,20 @@ export function columns(host, { rows, series, fmt, fmtAxis, height = 240, highli
     const hitbox = el('rect', { x: m.l + band * i, y: m.t, width: band, height: ph, fill: 'transparent', class: 'viz-hit', 'aria-label': `${r.label}: ${series.map((s) => `${s.name} ${fmt(r[s.key] || 0)}`).join(', ')}` }, g);
     hit(g, hitbox, (e) => showTip(e, r.label, [...series.map((s) => ({ color: s.color, value: fmt(r[s.key] || 0), label: s.name })), ...(r.tip || [])], hitbox));
   });
-  const top = (i) => ({ x: m.l + band * i + band / 2, y: m.t + ph - ((rows[i][series[0].key] || 0) / max) * ph });
-  // trend line joining the column tops (single series)
-  if (line && n === 1 && rows.length > 1) {
+  // top centre of series k's column in row i
+  const top = (i, k = 0) => ({ x: m.l + band * i + (band - groupW) / 2 + k * (bw + gap) + bw / 2, y: m.t + ph - ((rows[i][series[k].key] || 0) / max) * ph });
+  // trend line joining the tops of the first series' columns
+  if (line && rows.length > 1) {
     const g = el('g', { class: 'viz-trend', 'aria-hidden': 'true' }, svg);
     el('path', { d: rows.map((_, i) => `${i ? 'L' : 'M'}${top(i).x.toFixed(1)},${top(i).y.toFixed(1)}`).join('') }, g);
     rows.forEach((_, i) => el('circle', { cx: top(i).x, cy: top(i).y, r: 3 }, g));
   }
-  // value on top of every column (every other one when columns are narrow), else only on the last (current) one
-  if (labels && n === 1) {
-    const step = band < 38 ? 2 : 1;
+  // value on top of every column (every other month when columns are narrow), else only on the last (current) one
+  if (labels) {
+    const step = band < 30 * n ? 2 : 1;
     rows.forEach((r, i) => {
       if ((rows.length - 1 - i) % step) return;
-      text(svg, top(i).x, top(i).y - 8, fmtAxis(r[series[0].key] || 0), { 'text-anchor': 'middle', class: 'viz-label viz-halo' });
+      series.forEach((s, k) => text(svg, top(i, k).x, top(i, k).y - 8, fmtAxis(r[s.key] || 0), { 'text-anchor': 'middle', class: 'viz-label viz-halo' + (n > 1 ? ' small' : '') }));
     });
   } else if (n === 1 && rows.length) {
     const last = rows[rows.length - 1], v = last[series[0].key] || 0, h = (v / max) * ph;

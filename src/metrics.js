@@ -31,6 +31,8 @@ function topN(map, n, valueKey = 'value') {
 }
 
 // one filter slice: company, sales team, salesperson
+// "To invoice" counts orders dated from this day (default: 1 Jan of the current year); older ones are listed separately to check in Odoo
+const toInvoiceFrom = (today) => process.env.TO_INVOICE_FROM || today.slice(0, 4) + '-01-01';
 const sliceOf = (f) => (r) => (!f.company || r.companyId === f.company) && (!f.team || r.teamId === f.team) && (!f.user || r.userId === f.user);
 
 function compute(ds, f) {
@@ -56,7 +58,9 @@ function compute(ds, f) {
   // year to date: 1 Jan of the period-end year up to the period end, compared with the same dates last year
   const ytdFrom = to.slice(0, 4) + '-01-01', ytdPrevFrom = addMonths(ytdFrom, -12), ytdPrevTo = addMonths(to, -12);
   const ytd = soldIn(ytdFrom, to), ytdPrev = soldIn(ytdPrevFrom, ytdPrevTo);
-  const toInvoice = sold.filter((o) => o.invoiceStatus === 'to invoice');
+  const tiFrom = toInvoiceFrom(today);
+  const toInvoiceAll = sold.filter((o) => o.invoiceStatus === 'to invoice');
+  const toInvoice = toInvoiceAll.filter((o) => o.dateOrder >= tiFrom), toInvoiceOld = toInvoiceAll.filter((o) => o.dateOrder < tiFrom);
 
   const leads = ds.leads.filter(slice);
   const open = leads.filter((l) => l.status === 'open');
@@ -72,10 +76,17 @@ function compute(ds, f) {
     revenue: { value: revenue, prev: revenuePrev },
     orders: { value: cur.length, prev: prev.length },
     margin: { value: margin(cur), prev: margin(prev), revenue, revenuePrev },
+    // GP growth = (this month's margin − previous month's margin) / previous month's margin; "this month" = the month the period ends in, up to its end
+    gpGrowth: (() => {
+      const m0 = to.slice(0, 7) + '-01', p0 = addMonths(m0, -1), p1 = addDays(m0, -1);
+      const c = margin(soldIn(m0, to)), p = margin(soldIn(p0, p1));
+      return { value: c == null || !p ? null : (c - p) / Math.abs(p), cur: c, prev: p, month: m0.slice(0, 7), prevMonth: p0.slice(0, 7) };
+    })(),
     ytd: { from: ytdFrom, to, prevFrom: ytdPrevFrom, prevTo: ytdPrevTo,
       revenue: sum(ytd, (o) => o.amount), revenuePrev: sum(ytdPrev, (o) => o.amount),
       margin: margin(ytd), marginPrev: margin(ytdPrev), orders: ytd.length, ordersPrev: ytdPrev.length },
-    toInvoice: { value: sum(toInvoice, (o) => o.toInvoice ?? o.amount), count: toInvoice.length },
+    toInvoice: { value: sum(toInvoice, (o) => o.toInvoice ?? o.amount), count: toInvoice.length, from: tiFrom,
+      olderCount: toInvoiceOld.length, olderValue: sum(toInvoiceOld, (o) => o.toInvoice ?? o.amount) },
     pipeline: { value: sum(open, (l) => l.expected), weighted: sum(open, (l) => (l.expected * l.probability) / 100), count: open.length },
     won: { value: sum(won, (l) => l.expected), count: won.length, prev: sum(wonPrev, (l) => l.expected), prevCount: wonPrev.length },
     winRate: { value: rate(won, lost), prev: rate(wonPrev, lostPrev), won: won.length, lost: lost.length },
@@ -87,8 +98,8 @@ function compute(ds, f) {
   // 12-month trends ending at the period end
   const months = monthsEnding(to, 12);
   const mIdx = Object.fromEntries(months.map((m, i) => [m, i]));
-  const revByMonth = months.map((m) => ({ month: m, value: 0, orders: 0 }));
-  for (const o of sold) { const i = mIdx[ym(o.dateOrder)]; if (i != null) { revByMonth[i].value += o.amount; revByMonth[i].orders++; } }
+  const revByMonth = months.map((m) => ({ month: m, value: 0, margin: ds.hasMargin ? 0 : null, orders: 0 }));
+  for (const o of sold) { const i = mIdx[ym(o.dateOrder)]; if (i != null) { revByMonth[i].value += o.amount; if (ds.hasMargin) revByMonth[i].margin += o.margin || 0; revByMonth[i].orders++; } }
   // same months one year earlier, for the tooltip comparison
   const lastYear = months.map((m) => addMonths(m + '-01', -12).slice(0, 7));
   const lyIdx = Object.fromEntries(lastYear.map((m, i) => [m, i]));
@@ -209,7 +220,7 @@ function compute(ds, f) {
 
   return {
     period: { from, to, prevFrom, prevTo, days: len, compare: f.compare === 'ly' ? 'ly' : 'prev' }, today,
-    kpis, revByMonth, wonLost,
+    kpis, revByMonth, wonLost, hasMargin: !!ds.hasMargin,
     topCustomers: topN(cust, 11).map((c) => (ds.hasMargin ? c : { ...c, margin: null })),
     salespeople, stages: stageRows,
     sources: [...src.values()].sort((a, b) => b.value - a.value),
@@ -260,12 +271,14 @@ function invoiceDetails(ds, f) {
   const teams = Object.fromEntries(ds.teams.map((t) => [t.id, t.name]));
   const linesBy = new Map();
   for (const l of ds.invoiceLines || []) { if (!linesBy.has(l.orderId)) linesBy.set(l.orderId, []); linesBy.get(l.orderId).push(l); }
-  const rows = ds.orders.filter(sliceOf(f)).filter((o) => o.state === 'sale' && o.invoiceStatus === 'to invoice').map((o) => {
+  const from = toInvoiceFrom(today);
+  const all = ds.orders.filter(sliceOf(f)).filter((o) => o.state === 'sale' && o.invoiceStatus === 'to invoice').map((o) => {
     const ls = linesBy.get(o.id) || [];
-    return { id: o.id, name: o.name, date: o.dateOrder, age: daysBetween(o.dateOrder, today), partner: o.partner, user: o.user, team: teams[o.teamId] || '',
+    return { id: o.id, name: o.name, date: o.dateOrder, older: o.dateOrder < from, age: daysBetween(o.dateOrder, today), partner: o.partner, user: o.user, team: teams[o.teamId] || '',
       amount: o.amount, invoiced: ds.hasInvoiceAmounts ? sum(ls, (l) => l.invoicedAmount || 0) : null, toInvoice: o.toInvoice ?? o.amount,
       lines: ls.filter((l) => !ds.hasInvoiceAmounts || l.toInvoice || l.toInvoiceQty) };
   }).sort((a, b) => b.age - a.age);
+  const rows = all.filter((r) => !r.older), old = all.filter((r) => r.older);   // totals and breakdowns: from the cut-off date only
   const group = (key) => {
     const g = new Map();
     for (const r of rows) { const k = key(r); const x = g.get(k) || { name: k, value: 0, orders: 0 }; x.value += r.toInvoice; x.orders++; g.set(k, x); }
@@ -274,10 +287,10 @@ function invoiceDetails(ds, f) {
   const ages = [['0–30 days', 0, 30], ['31–60 days', 31, 60], ['61–90 days', 61, 90], ['Over 90 days', 91, Infinity]]
     .map(([name, a, b]) => { const rs = rows.filter((r) => r.age >= a && r.age <= b); return { name, value: sum(rs, (r) => r.toInvoice), orders: rs.length }; });
   return {
-    hasAmounts: !!ds.hasInvoiceAmounts, today,
+    hasAmounts: !!ds.hasInvoiceAmounts, today, from, older: { count: old.length, toInvoice: sum(old, (r) => r.toInvoice) },
     total: { toInvoice: sum(rows, (r) => r.toInvoice), orders: rows.length, oldest: rows.length ? rows[0].age : null,
       over60: sum(rows.filter((r) => r.age > 60), (r) => r.toInvoice), over60Count: rows.filter((r) => r.age > 60).length },
-    ages, bySalesperson: group((r) => r.user), byCustomer: group((r) => r.partner), orders: rows,
+    ages, bySalesperson: group((r) => r.user), byCustomer: group((r) => r.partner), orders: all,
   };
 }
 
@@ -302,13 +315,17 @@ function targetDetails(ds, f) {
 }
 
 // ---- receivables: posted customer invoices not fully paid, as of today (not tied to the period filter) ----
+// statement texts (each can still be edited on the statement before printing); company defaults to the Odoo company of the invoices
 const SOA = {
-  email: process.env.SOA_EMAIL || 'accounts@evertechme.com',
-  company: process.env.SOA_COMPANY || 'Evertech',
-  signature: process.env.SOA_SIGNATURE || 'Accounts Department',
-  attn: process.env.SOA_ATTN || 'Accounts Payable',
-  note: process.env.SOA_NOTE || 'Kindly settle the outstanding invoices as per the details provided.',
+  company: process.env.SOA_COMPANY || '',
+  greeting: process.env.SOA_GREETING || 'Dear Accounts Payable Team,',
+  closing: process.env.SOA_CLOSING || 'Kindly settle the amount and share the remittance advice',
+  query: process.env.SOA_QUERY || 'Should you have any query about this statement, please contact me directly.',
+  signature: process.env.SOA_SIGNATURE || 'Account Manager',
+  email: process.env.SOA_EMAIL || '',
 };
+// one customer even when Odoo holds the company twice (duplicate contacts): same name ignoring case, spaces and punctuation
+const custKey = (name) => String(name || '').toUpperCase().replace(/[^A-Z0-9\u0600-\u06FF]/g, '');
 function openInvoices(ds, f) {
   const today = f.today;
   return (ds.receivables || []).filter(sliceOf(f)).map((r) => ({ ...r, overdue: r.residual > 0 && r.due && r.due < today ? daysBetween(r.due, today) : 0 }));
@@ -327,12 +344,15 @@ function receivablesDetails(ds, f) {
   const rows = openInvoices(ds, f).sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
   const cust = new Map();
   for (const r of rows) {
-    const c = cust.get(r.partnerId) || { id: r.partnerId, name: r.partner, count: 0, outstanding: 0, overdue: 0, oldest: 0, nextDue: null, invoices: [] };
+    const k = custKey(r.partner) || `#${r.partnerId}`;
+    const c = cust.get(k) || { ids: [], name: r.partner, count: 0, outstanding: 0, overdue: 0, oldest: 0, nextDue: null, invoices: [] };
+    if (!c.ids.includes(r.partnerId)) c.ids.push(r.partnerId);
     c.count++; c.outstanding += r.residual; c.invoices.push(r);
     if (r.overdue > 0) { c.overdue += r.residual; c.oldest = Math.max(c.oldest, r.overdue); }
     else if (r.residual > 0 && (!c.nextDue || r.due < c.nextDue)) c.nextDue = r.due;
-    cust.set(r.partnerId, c);
+    cust.set(k, c);
   }
+  for (const c of cust.values()) c.id = c.ids.join('_');   // statement link: every Odoo record of this customer
   const ages = [['Not due yet', -Infinity, 0], ['1–30 days overdue', 1, 30], ['31–60 days overdue', 31, 60], ['61–90 days overdue', 61, 90], ['Over 90 days overdue', 91, Infinity]]
     .map(([name, a, b]) => { const rs = rows.filter((r) => r.overdue >= a && r.overdue <= b && (b > 0 || r.overdue === 0)); return { name, value: sum(rs, (r) => r.residual), orders: rs.length }; });
   const people = new Map();
@@ -341,13 +361,16 @@ function receivablesDetails(ds, f) {
     bySalesperson: [...people.values()].sort((a, b) => b.value - a.value),
     customers: [...cust.values()].filter((c) => Math.abs(c.outstanding) > 0.005).sort((a, b) => b.outstanding - a.outstanding), invoices: rows };
 }
-/** Statement of account for one customer: every open invoice and credit note (all salespeople), company filter only. */
-function statement(ds, partnerId, f) {
+/** Statement of account for one customer (one or more duplicate Odoo records): every open invoice and credit note (all salespeople), company filter only. */
+function statement(ds, partnerIds, f) {
   if (!ds.receivables) return { available: false, error: ds.receivablesError || null };
-  const rows = openInvoices(ds, { company: f.company, today: f.today }).filter((r) => r.partnerId === partnerId)
+  const rows = openInvoices(ds, { company: f.company, today: f.today }).filter((r) => partnerIds.includes(r.partnerId))
     .sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
-  const p = ds.partners[partnerId] || { name: rows[0]?.partner || '' };
-  return { available: true, date: f.today, customer: { id: partnerId, ...p }, soa: SOA,
+  // name and address from the record that has an address (the first one otherwise)
+  const recs = partnerIds.map((id) => ds.partners[id]).filter(Boolean);
+  const p = recs.find((x) => x.street || x.city) || recs[0] || { name: rows[0]?.partner || '' };
+  const company = SOA.company || ds.companies.find((c) => c.id === rows[0]?.companyId)?.name || ds.companies[0]?.name || '';
+  return { available: true, date: f.today, customer: { id: partnerIds.join('_'), ...p }, soa: { ...SOA, company },
     lines: rows.map((r) => ({ id: r.id, name: r.name, type: r.type, date: r.date, ref: r.ref, product: r.product, amount: r.residual, total: r.total, due: r.due, overdue: r.overdue })),
     total: sum(rows, (r) => r.residual), overdue: sum(rows.filter((r) => r.overdue > 0), (r) => r.residual) };
 }

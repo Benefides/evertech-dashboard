@@ -7,51 +7,75 @@
   <link rel="icon" href="/logo.png">
   <style>
     /* A4 statement, printed on white whatever the screen theme */
-    :root { --navy: #0b2265; --band: #dde9f6; --line: #222; --muted: #5a5a5a; }
+    :root { --green: #155e4b; --head: #e7efec; --rule: #2e6b5a; --red: #c0262d; --ink: #1d1d1d; --muted: #666; --edit: #2a78d6; }
     * { box-sizing: border-box; }
-    html, body { margin: 0; background: #ecebe7; color: #111; font: 13px/1.4 Calibri, Carlito, "Segoe UI", system-ui, sans-serif; }
-    .bar { position: sticky; top: 0; display: flex; gap: 8px; justify-content: center; align-items: center; padding: 10px; background: #fff; border-bottom: 1px solid #d6d4cc; z-index: 2; flex-wrap: wrap; }
+    html, body { margin: 0; background: #ecebe7; color: var(--ink); font: 13px/1.45 Arial, Helvetica, sans-serif; }
+
+    /* toolbar (screen only) */
+    .bar { position: sticky; top: 0; display: flex; gap: 8px; justify-content: center; align-items: center; padding: 10px; background: #fff; border-bottom: 1px solid #d6d4cc; z-index: 5; flex-wrap: wrap; }
     .bar button, .bar a { font: 600 13px system-ui, sans-serif; border: 1px solid #c9c7bf; background: #fff; color: #111; border-radius: 8px; padding: 7px 14px; cursor: pointer; text-decoration: none; }
-    .bar button.primary { background: var(--navy); border-color: var(--navy); color: #fff; }
-    .bar .hint { font: 12px system-ui, sans-serif; color: var(--muted); }
-    .page { width: 210mm; min-height: 297mm; margin: 18px auto; background: #fff; padding: 22mm 18mm 20mm; box-shadow: 0 2px 18px rgba(0, 0, 0, .12); }
-    .logo { height: 46px; display: block; margin-bottom: 22px; }
-    .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 22px; }
-    .head h1 { margin: 0; font-size: 17px; font-weight: 400; text-decoration: underline; text-underline-offset: 3px; letter-spacing: .01em; }
-    .head .date { font-weight: 700; font-size: 13.5px; }
-    .cust b { display: block; margin-bottom: 3px; }
-    .cust div { color: #333; line-height: 1.5; }
-    .attn { margin: 18px 0 14px; color: #333; }
-    .note { margin: 0 0 14px; color: #333; }
+    .bar button.primary { background: var(--green); border-color: var(--green); color: #fff; }
+    .bar button[aria-pressed="true"] { background: #e8f0fb; border-color: var(--edit); color: #0d4fa8; }
+    .bar .hint { font: 12px system-ui, sans-serif; color: var(--muted); max-width: 420px; }
+
+    .page { width: 210mm; min-height: 297mm; margin: 18px auto; background: #fff; padding: 16mm 15mm 18mm; box-shadow: 0 2px 18px rgba(0, 0, 0, .12); }
+    .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; padding-bottom: 8px; border-bottom: 2.5px solid var(--rule); }
+    .co { color: var(--green); font-size: 22px; font-weight: 700; padding-top: 4px; }
+    .title { text-align: right; }
+    .title h1 { margin: 0; font-size: 26px; font-weight: 700; color: #111; line-height: 1.1; }
+    .title .asat { color: var(--muted); font-size: 12px; }
+    .cust { margin-top: 26px; }
+    .cust .name { font-weight: 700; font-size: 14px; margin-bottom: 8px; }
+    .cust .addr { white-space: pre-line; }
+    .greet { margin: 20px 0 8px; }
+    .letter { margin: 0 0 30px; font-size: 13.5px; }
     table { width: 100%; border-collapse: collapse; }
-    th { background: var(--navy); color: #fff; font-weight: 700; padding: 8px 6px; border: 1px solid var(--line); text-align: center; font-size: 13px; }
-    td { border: 1px solid var(--line); padding: 2px 6px; font-size: 12.5px; color: #222; height: 19px; }
-    td.c { text-align: center; } td.r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-    td.nw { white-space: nowrap; }
-    td.od { color: #b42318; text-align: center; white-space: nowrap; }
-    tr.band td { background: var(--band); font-weight: 700; color: #111; }
-    tr.credit td { color: #555; font-style: italic; }
-    .total { display: flex; justify-content: space-between; padding: 12px 2px 6px; border-bottom: 3px solid #000; font-weight: 700; font-size: 13.5px; }
-    .total span:last-child { width: 32%; text-align: left; font-variant-numeric: tabular-nums; }
-    .overdue-sum { margin-top: 8px; color: #b42318; font-size: 12.5px; }
-    .sign { margin-top: 70px; width: 52mm; border-top: 1.5px solid #000; padding-top: 4px; }
-    .sign b { display: block; }
-    .sign span { color: #333; }
+    table.inv th { background: var(--head); font-size: 11.5px; font-weight: 700; text-align: left; padding: 8px 6px; vertical-align: top; }
+    table.inv td { padding: 7px 6px; font-size: 11.5px; border-bottom: 1px solid #e3e3e3; vertical-align: top; }
+    table.inv .r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    table.inv .nw { white-space: nowrap; }
+    table.inv td.od { color: var(--red); font-weight: 700; text-align: right; }
+    table.inv tr.credit td { color: #555; font-style: italic; }
+    table.inv tr.tot td { border-top: 2px solid var(--rule); border-bottom: 2px solid var(--rule); font-weight: 700; font-size: 12px; padding: 9px 6px; }
+    table.inv tr.odr td { color: var(--red); font-weight: 700; font-size: 12px; border-bottom: 0; padding-top: 10px; }
+    table.inv th.sel, table.inv td.sel { width: 22px; padding-right: 0; }
+    table.age { margin-top: 30px; }
+    table.age th { background: var(--head); font-size: 11.5px; font-weight: 700; padding: 8px 6px; text-align: right; }
+    table.age th:first-child { text-align: right; padding-right: 30px; }
+    table.age td { font-size: 11.5px; padding: 8px 6px; text-align: right; font-variant-numeric: tabular-nums; }
+    .closing { margin-top: 26px; }
+    .closing p { margin: 0 0 9px; white-space: pre-line; }
+    .sign { margin-top: 56px; white-space: pre-line; }
+
+    /* edit mode: everything editable gets a dashed outline; untick an invoice to leave it out */
+    body:not(.editing) .sel, body:not(.editing) tr.excluded { display: none; }
+    body.editing [contenteditable="true"] { outline: 1.5px dashed #9cc0ef; outline-offset: 2px; border-radius: 2px; min-width: 20px; cursor: text; }
+    body.editing [contenteditable="true"]:hover, body.editing [contenteditable="true"]:focus { outline-color: var(--edit); background: #f4f8fe; }
+    tr.excluded td { opacity: .4; text-decoration: line-through; }
+    tr.excluded td.sel { opacity: 1; text-decoration: none; }
+
     .empty, .err { max-width: 520px; margin: 60px auto; background: #fff; padding: 24px; border-radius: 12px; font: 14px system-ui, sans-serif; text-align: center; }
-    .err { color: #b42318; }
+    .err { color: var(--red); }
     @page { size: A4; margin: 0; }
     @media print {
       html, body { background: #fff; }
-      .bar { display: none; }
+      .bar, .sel, tr.excluded { display: none !important; }
+      [contenteditable] { outline: none !important; background: none !important; }
       .page { margin: 0; box-shadow: none; width: auto; min-height: auto; }
-      th, tr.band td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      th, table.inv tr.tot td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .page + .page { page-break-before: always; }
     }
-    @media (max-width: 820px) { .page { width: auto; margin: 10px; padding: 18px 14px; min-height: 0; } td, th { font-size: 11px; } }
+    @media (max-width: 820px) { .page { width: auto; margin: 10px; padding: 18px 14px; min-height: 0; } .co { font-size: 17px; } .title h1 { font-size: 19px; } }
   </style>
 </head>
 <body>
-  <div class="bar"><button class="primary" id="print">Print / Save as PDF</button><a href="/" id="back">Back to dashboard</a><span class="hint">Choose "Save as PDF" in the print window to get a file.</span></div>
+  <div class="bar">
+    <button id="edit" aria-pressed="false">✎ Edit</button>
+    <button class="primary" id="print">Print / Save as PDF</button>
+    <button id="reset" hidden>Undo my changes</button>
+    <a href="/" id="back">Back to dashboard</a>
+    <span class="hint" id="hint">Click Edit to change any text or leave out invoices before printing. Choose "Save as PDF" in the print window to get a file.</span>
+  </div>
   <div id="out"><div class="empty">Loading statement…</div></div>
   <script type="module" src="/statement.js"></script>
 </body>

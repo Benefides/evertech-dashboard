@@ -128,6 +128,8 @@ function dataset() {
     deadline: iso(addDays(today, -Math.ceil(between(1, 21)))), companyId: l.companyId, teamId: l.teamId,
   }));
 
+  // a few last-year orders Odoo still shows as "to invoice" (forgotten partial invoices)
+  for (const o of orders.filter((x) => x.state === 'sale' && x.dateOrder.startsWith(String(today.getUTCFullYear() - 1))).slice(5, 8)) o.invoiceStatus = 'to invoice';
   // what's left to invoice: on "to invoice" orders every other line is still open, the rest already invoiced
   const toInv = new Set(orders.filter((o) => o.state === 'sale' && o.invoiceStatus === 'to invoice').map((o) => o.id));
   const seen = new Map();

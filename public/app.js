@@ -252,9 +252,16 @@ function renderMain() {
   const tg = d.target, tt = tg.total;
   const y = k.ytd, ytdLabel = `1 Jan – ${dmy(y.to).replace(/ \d{4}$/, '')} vs ${Number(y.to.slice(0, 4)) - 1}`;
   // margin tile: amount, change vs the comparison, and margin as % of revenue; "–" when Odoo has no margin field
+  // GP growth from previous month, as a percentage
+  const gpTile = (g) => {
+    const short = (m) => MONTHS[Number(m.slice(5)) - 1];
+    if (g.cur == null) return tile('GP growth', '–', '<span>needs the Sales Margin module in Odoo</span>');
+    const v = g.value == null ? '–' : `<span class="${g.value >= 0 ? 'up' : 'down'}">${g.value >= 0 ? '+' : '−'}${Math.abs(g.value * 100).toFixed(1)}%</span>`;
+    return tile('GP growth', v, `<span>${short(g.month)} ${money(g.cur)} vs ${short(g.prevMonth)} ${money(g.prev)}</span>`, '', 'gp');
+  };
   const marginTile = (label, m, mPrev, rev, note, cls = '', href = '') => (m == null
     ? tile(label, '–', '<span>needs the Sales Margin module in Odoo</span>', '', cls)
-    : tile(label, `<span title="${moneyFull(m)}">${money(m)}</span>`, delta(m, mPrev), ` <span>${rev ? pct(m / rev) + ' of revenue · ' : ''}${note}</span>`, cls, href));
+    : tile(label, `<span title="${moneyFull(m)}">${money(m)}</span>`, delta(m, mPrev), ` <span>${rev ? pct(m / rev) + ' of sales · ' : ''}${note}</span>`, cls, href));
 
   $('#main').innerHTML = `
     ${META.source === 'demo' ? '<div class="banner tv-hide">Showing sample data. Add your Odoo URL, database, login and API key to <b>.env</b> to see Evertech\'s real numbers.</div>' : ''}
@@ -263,21 +270,22 @@ function renderMain() {
     <section class="section" aria-labelledby="h-sales">
       <div class="section-head"><h2 id="h-sales">Sales</h2><span class="sub">Confirmed sales orders, by order date</span></div>
       <div class="tiles">
-        <a class="tile hero link" href="${per}" title="Show the orders behind this number"><div class="k">Revenue <span class="go" aria-hidden="true">›</span></div><div class="v" title="${moneyFull(k.revenue.value)}">${money(k.revenue.value)}</div>
+        <a class="tile hero link" href="${per}" title="Show the orders behind this number"><div class="k">Sales <span class="go" aria-hidden="true">›</span></div><div class="v" title="${moneyFull(k.revenue.value)}">${money(k.revenue.value)}</div>
           <div class="row"><div class="d">${delta(k.revenue.value, k.revenue.prev)} <span>${vs}</span></div><div id="spark-rev"></div></div></a>
         ${marginTile('Margin', k.margin.value, k.margin.prev, k.margin.revenue, vs, '', per)}
-        ${tile('Revenue YTD', `<span title="${moneyFull(y.revenue)}">${money(y.revenue)}</span>`, delta(y.revenue, y.revenuePrev), ` <span>${ytdLabel}</span>`, 'ytd', ytdH)}
+        ${gpTile(k.gpGrowth)}
+        ${tile('Sales YTD', `<span title="${moneyFull(y.revenue)}">${money(y.revenue)}</span>`, delta(y.revenue, y.revenuePrev), ` <span>${ytdLabel}</span>`, 'ytd', ytdH)}
         ${marginTile('Margin YTD', y.margin, y.marginPrev, y.revenue, ytdLabel, 'ytd', ytdH)}
         ${tile('Orders', int(k.orders.value), delta(k.orders.value, k.orders.prev), ` <span>in the period</span>`, '', per)}
         ${tile('Orders YTD', int(y.orders), delta(y.orders, y.ordersPrev), ` <span>${ytdLabel}</span>`, 'ytd', ytdH)}
-        ${tile('To invoice', money(k.toInvoice.value), `<span>${int(k.toInvoice.count)} confirmed orders · any date</span>`, '', '', viewHref('invoice'))}
+        ${tile('To invoice', money(k.toInvoice.value), `<span>${int(k.toInvoice.count)} orders since ${dmy(k.toInvoice.from)}</span>${k.toInvoice.olderCount ? ` ${status('warning', `${int(k.toInvoice.olderCount)} older to check`)}` : ''}`, '', '', viewHref('invoice'))}
       </div>
       <div class="grid g-wide" style="margin-top:14px">
-        ${chartCard('c-rev', 'Revenue by month', `Last 12 months to ${monthLabel(months[months.length - 1].month)}`)}
-        ${chartCard('c-cust', 'Top customers', 'Revenue in the period', `<a class="btn sm tv-hide" data-csv="customers">CSV</a>`)}
+        ${chartCard('c-rev', 'Sales by month', `Last 12 months to ${monthLabel(months[months.length - 1].month)}`)}
+        ${chartCard('c-cust', 'Top customers', 'Sales in the period', `<a class="btn sm tv-hide" data-csv="customers">CSV</a>`)}
       </div>
       <div class="grid" style="margin-top:14px">
-        <div class="card"><div class="card-head"><div><h3>Salespeople</h3><p>Revenue and CRM results in the period, open pipeline now</p></div>
+        <div class="card"><div class="card-head"><div><h3>Salespeople</h3><p>Sales and CRM results in the period, open pipeline now</p></div>
           <div class="tools"><a class="btn sm" data-csv="salespeople">CSV</a></div></div><div class="table-wrap" id="t-people"></div></div>
       </div>
     </section>
@@ -304,7 +312,7 @@ function renderMain() {
         ${tile('Overdue activities', int(k.overdue.value), k.overdue.value ? status('serious', 'Needs follow-up') : status('good', 'All on time'))}
       </div>
       <div class="grid g-wide" style="margin-top:14px">
-        ${chartCard('c-target', 'Target vs won by month', 'Target = expected revenue of opportunities with their Expected Closing date in the month')}
+        ${chartCard('c-target', 'Target vs won by month', 'Target = expected sales of opportunities with their Expected Closing date in the month')}
         <div class="card"><div class="card-head"><div><h3>Target</h3><p>${dmy(tg.from)} – ${dmy(tg.to)}</p></div><div class="tools"><a class="btn sm" href="${viewHref('target')}">Details ›</a></div></div>
           <dl class="fc">
             <div class="total"><dt>Target<small>${int(tt.count)} opportunities planned to close</small></dt><dd>${money(tt.target)}</dd></div>
@@ -317,7 +325,7 @@ function renderMain() {
       <div class="card" style="margin-top:14px"><div class="card-head"><div><h3>Target by salesperson</h3><p>${dmy(tg.from)} – ${dmy(tg.to)} · target from Expected Closing dates, won by close date</p></div>
         <div class="tools"><a class="btn sm" data-csv="target">CSV</a><a class="btn sm" href="${viewHref('target')}">Details ›</a></div></div><div class="table-wrap" id="t-target"></div></div>
       <div class="grid g2" style="margin-top:14px">
-        ${chartCard('c-stage', 'Pipeline by stage', 'Expected revenue of open opportunities', `<a class="btn sm tv-hide" data-csv="pipeline">CSV</a>`)}
+        ${chartCard('c-stage', 'Pipeline by stage', 'Expected sales of open opportunities', `<a class="btn sm tv-hide" data-csv="pipeline">CSV</a>`)}
         ${chartCard('c-wl', 'Won and lost per month', 'Number of opportunities closed')}
       </div>
       <div class="grid g2" style="margin-top:14px">
@@ -362,18 +370,24 @@ function renderMain() {
   sparkline($('#spark-rev'), months.map((m) => m.value));
 
   // revenue by month
+  // sales and margin side by side per month (margin only when Odoo has it)
+  const salesSeries = [{ key: 'value', name: 'Sales', color: cssVar('--series-1') }, ...(d.hasMargin ? [{ key: 'margin', name: 'Margin', color: cssVar('--series-2') }] : [])];
+  const salesLegend = d.hasMargin ? [{ name: 'Sales', color: 'var(--series-1)' }, { name: 'Margin', color: 'var(--series-2)' }] : null;
+  const mPct = (r) => (r.margin == null || !r.value ? '–' : pct(r.margin / r.value));
   mountChart('c-rev', (host) => columns(host, {
-    rows: months.map((m) => ({ label: monthLabel(m.month), short: MONTHS[Number(m.month.slice(5)) - 1], value: m.value,
-      tip: [{ value: int(m.orders), label: 'orders' }, ...(m.lastYear != null ? [{ value: money(m.lastYear), label: 'same month last year' }] : [])] })),
-    series: [{ key: 'value', name: 'Revenue', color: cssVar('--series-1') }], fmt: moneyFull, fmtAxis: compact, height: 280, labels: true, line: true, ariaLabel: 'Revenue by month, last 12 months',
-  }), months, [{ label: 'Month', get: (r) => monthLabel(r.month) }, { label: 'Revenue', get: (r) => moneyFull(r.value), num: 1 }, { label: 'Orders', get: (r) => int(r.orders), num: 1 }, { label: 'Same month last year', get: (r) => (r.lastYear == null ? '–' : moneyFull(r.lastYear)), num: 1 }]);
+    rows: months.map((m) => ({ label: monthLabel(m.month), short: MONTHS[Number(m.month.slice(5)) - 1], value: m.value, margin: m.margin,
+      tip: [...(m.margin == null ? [] : [{ value: mPct(m), label: 'margin %' }]), { value: int(m.orders), label: 'orders' }, ...(m.lastYear != null ? [{ value: money(m.lastYear), label: 'sales same month last year' }] : [])] })),
+    series: salesSeries, fmt: moneyFull, fmtAxis: compact, height: 280, labels: true, line: true, ariaLabel: 'Sales and margin by month, last 12 months',
+  }), months, [{ label: 'Month', get: (r) => monthLabel(r.month) }, { label: 'Sales', get: (r) => moneyFull(r.value), num: 1 },
+    ...(d.hasMargin ? [{ label: 'Margin', get: (r) => moneyFull(r.margin), num: 1 }, { label: 'Margin %', get: mPct, num: 1 }] : []),
+    { label: 'Orders', get: (r) => int(r.orders), num: 1 }, { label: 'Sales same month last year', get: (r) => (r.lastYear == null ? '–' : moneyFull(r.lastYear)), num: 1 }], salesLegend);
 
   const barRows = (rows, extraTip) => rows.map((r) => ({ label: r.name, value: r.value, other: r.other, tip: extraTip ? extraTip(r) : [] }));
   const empty = (host, msg) => { host.innerHTML = `<div class="empty">${msg}</div>`; };
 
   const marginPct = (r) => (r.margin == null || !r.value ? '–' : pct(r.margin / r.value));
-  mountChart('c-cust', (host) => (d.topCustomers.length ? hbars(host, { rows: barRows(d.topCustomers, (r) => [...(r.margin == null ? [] : [{ value: `${money(r.margin)} (${marginPct(r)})`, label: 'margin' }]), { value: int(r.orders), label: 'orders' }]), color: cssVar('--series-1'), fmt: money, ariaLabel: 'Top customers by revenue' }) : empty(host, 'No confirmed orders in this period.')),
-    d.topCustomers, [{ label: 'Customer', get: (r) => r.name }, { label: 'Revenue', get: (r) => moneyFull(r.value), num: 1 }, { label: 'Margin', get: (r) => moneyFull(r.margin), num: 1 }, { label: 'Margin %', get: marginPct, num: 1 }, { label: 'Orders', get: (r) => int(r.orders), num: 1 }]);
+  mountChart('c-cust', (host) => (d.topCustomers.length ? hbars(host, { rows: barRows(d.topCustomers, (r) => [...(r.margin == null ? [] : [{ value: `${money(r.margin)} (${marginPct(r)})`, label: 'margin' }]), { value: int(r.orders), label: 'orders' }]), color: cssVar('--series-1'), fmt: money, ariaLabel: 'Top customers by sales' }) : empty(host, 'No confirmed orders in this period.')),
+    d.topCustomers, [{ label: 'Customer', get: (r) => r.name }, { label: 'Sales', get: (r) => moneyFull(r.value), num: 1 }, { label: 'Margin', get: (r) => moneyFull(r.margin), num: 1 }, { label: 'Margin %', get: marginPct, num: 1 }, { label: 'Orders', get: (r) => int(r.orders), num: 1 }]);
 
 
   mountChart('c-stage', (host) => (d.stages.some((s2) => s2.count) ? hbars(host, {
@@ -385,7 +399,7 @@ function renderMain() {
     rows: tg.months.map((r) => ({ label: monthLabel(r.month) + (r.future ? ' (planned)' : ''), short: MONTHS[Number(r.month.slice(5)) - 1], target: r.target, achieved: r.future ? 0 : r.achieved,
       tip: [{ value: r.pct == null || r.future ? '–' : pct(r.pct), label: 'of target' }, { value: int(r.count), label: 'opportunities planned' }, { value: int(r.openCount), label: 'still open' }] })),
     series: [{ key: 'target', name: 'Target', color: cssVar('--series-1') }, { key: 'achieved', name: 'Won', color: cssVar('--series-2') }],
-    fmt: moneyFull, fmtAxis: compact, height: 250, ariaLabel: 'Monthly target and won revenue',
+    fmt: moneyFull, fmtAxis: compact, height: 250, ariaLabel: 'Monthly target and won sales',
   }), tg.months, [{ label: 'Month', get: (r) => monthLabel(r.month) }, { label: 'Target', get: (r) => moneyFull(r.target), num: 1 }, { label: 'Won', get: (r) => moneyFull(r.achieved), num: 1 },
     { label: 'Achievement', get: (r) => (r.pct == null ? '–' : pct(r.pct)), num: 1 }, { label: 'Still open', get: (r) => moneyFull(r.open), num: 1 }, { label: 'Lost', get: (r) => moneyFull(r.lost), num: 1 }],
   [{ name: 'Target', color: 'var(--series-1)' }, { name: 'Won', color: 'var(--series-2)' }]);
@@ -406,13 +420,13 @@ function renderMain() {
     d.sources, [{ label: 'Source', get: (r) => r.name }, { label: 'New leads', get: (r) => int(r.value), num: 1 }, { label: 'Won so far', get: (r) => int(r.won), num: 1 }]);
 
   mountChart('c-lost', (host) => (d.lostReasons.length ? hbars(host, {
-    rows: d.lostReasons.map((r) => ({ label: r.name, value: r.value, valueLabel: 'lost', tip: [{ value: money(r.amount), label: 'expected revenue lost' }] })),
+    rows: d.lostReasons.map((r) => ({ label: r.name, value: r.value, valueLabel: 'lost', tip: [{ value: money(r.amount), label: 'expected sales lost' }] })),
     color: cssVar('--series-1'), fmt: int, ariaLabel: 'Lost opportunities by reason' }) : empty(host, 'No lost opportunities in this period.')),
-    d.lostReasons, [{ label: 'Reason', get: (r) => r.name }, { label: 'Lost', get: (r) => int(r.value), num: 1 }, { label: 'Expected revenue', get: (r) => moneyFull(r.amount), num: 1 }]);
+    d.lostReasons, [{ label: 'Reason', get: (r) => r.name }, { label: 'Lost', get: (r) => int(r.value), num: 1 }, { label: 'Expected sales', get: (r) => moneyFull(r.amount), num: 1 }]);
 
   // salespeople leaderboard
   const maxRev = Math.max(1, ...d.salespeople.map((x) => x.revenue));
-  $('#t-people').innerHTML = d.salespeople.length ? `<table><thead><tr><th>Salesperson</th><th class="num">Revenue</th><th class="bar-cell hide-sm"></th><th class="num">Orders</th><th class="num hide-sm">Won</th><th class="num">Win rate</th><th class="num hide-sm">Pipeline</th></tr></thead><tbody>
+  $('#t-people').innerHTML = d.salespeople.length ? `<table><thead><tr><th>Salesperson</th><th class="num">Sales</th><th class="bar-cell hide-sm"></th><th class="num">Orders</th><th class="num hide-sm">Won</th><th class="num">Win rate</th><th class="num hide-sm">Pipeline</th></tr></thead><tbody>
     ${d.salespeople.map((x) => `<tr><td class="name">${esc(x.name)}${x.overdue ? `<br><small>${x.overdue} overdue activit${x.overdue > 1 ? 'ies' : 'y'}</small>` : ''}</td>
       <td class="num">${money(x.revenue)}</td><td class="bar-cell hide-sm"><div class="inline-bar" style="width:${(x.revenue / maxRev) * 100}%"></div></td>
       <td class="num">${int(x.orders)}</td><td class="num hide-sm">${int(x.won)}</td><td class="num">${pct(x.winRate)}</td><td class="num hide-sm">${money(x.pipeline)}</td></tr>`).join('')}</tbody></table>`
@@ -467,15 +481,15 @@ function renderDetail() {
       </div>
     </div>
     <section class="section" style="margin-top:16px" aria-labelledby="h-det">
-      <div class="section-head"><h2 id="h-det">Revenue details</h2><span class="sub">${dmy(d.from)} – ${dmy(d.to)} · confirmed sales orders by order date · ${esc(d.currency.name)}, excl. tax</span></div>
+      <div class="section-head"><h2 id="h-det">Sales details</h2><span class="sub">${dmy(d.from)} – ${dmy(d.to)} · confirmed sales orders by order date · ${esc(d.currency.name)}, excl. tax</span></div>
       <div class="tiles detail">
-        ${tile('Revenue', `<span title="${moneyFull(t.revenue)}">${money(t.revenue)}</span>`, `<span>${int(t.orders)} orders</span>`)}
-        ${tile('Margin', t.margin == null ? '–' : `<span title="${moneyFull(t.margin)}">${money(t.margin)}</span>`, t.margin == null ? '<span>needs the Sales Margin module in Odoo</span>' : `<span>${t.revenue ? pct(t.margin / t.revenue) : '–'} of revenue</span>`)}
+        ${tile('Sales', `<span title="${moneyFull(t.revenue)}">${money(t.revenue)}</span>`, `<span>${int(t.orders)} orders</span>`)}
+        ${tile('Margin', t.margin == null ? '–' : `<span title="${moneyFull(t.margin)}">${money(t.margin)}</span>`, t.margin == null ? '<span>needs the Sales Margin module in Odoo</span>' : `<span>${t.revenue ? pct(t.margin / t.revenue) : '–'} of sales</span>`)}
         ${tile('Orders', int(t.orders), `<span>${int(t.customers)} customers</span>`)}
-        ${tile('Average order', money(t.orders ? t.revenue / t.orders : null), '<span>revenue per order</span>')}
+        ${tile('Average order', money(t.orders ? t.revenue / t.orders : null), '<span>sales per order</span>')}
       </div>
       <div class="grid g-wide" style="margin-top:14px">
-        ${chartCard('c-det-month', 'Revenue by month', `${monthLabel(d.byMonth[0].month)} – ${monthLabel(d.byMonth[d.byMonth.length - 1].month)}`)}
+        ${chartCard('c-det-month', 'Sales by month', `${monthLabel(d.byMonth[0].month)} – ${monthLabel(d.byMonth[d.byMonth.length - 1].month)}`)}
         <div class="card"><div class="card-head"><div><h3>By salesperson</h3></div></div><div class="table-wrap">${breakdown(d.bySalesperson, 'Salesperson', 12)}</div></div>
       </div>
       <div class="grid g2" style="margin-top:14px">
@@ -490,16 +504,17 @@ function renderDetail() {
     </section>`;
 
   mountChart('c-det-month', (host) => columns(host, {
-    rows: d.byMonth.map((m) => ({ label: monthLabel(m.month), short: MONTHS[Number(m.month.slice(5)) - 1], value: m.value,
-      tip: [{ value: int(m.orders), label: 'orders' }, ...(m.margin == null ? [] : [{ value: `${money(m.margin)} (${mp(m)})`, label: 'margin' }])] })),
-    series: [{ key: 'value', name: 'Revenue', color: cssVar('--series-1') }], fmt: moneyFull, fmtAxis: compact, height: 260,
-    labels: d.byMonth.length <= 18, line: d.byMonth.length > 1, ariaLabel: 'Revenue by month',
-  }), d.byMonth, [{ label: 'Month', get: (r) => monthLabel(r.month) }, { label: 'Revenue', get: (r) => moneyFull(r.value), num: 1 },
-    ...(d.hasMargin ? [{ label: 'Margin', get: (r) => moneyFull(r.margin), num: 1 }, { label: 'Margin %', get: mp, num: 1 }] : []), { label: 'Orders', get: (r) => int(r.orders), num: 1 }]);
+    rows: d.byMonth.map((m) => ({ label: monthLabel(m.month), short: MONTHS[Number(m.month.slice(5)) - 1], value: m.value, margin: m.margin,
+      tip: [...(m.margin == null ? [] : [{ value: mp(m), label: 'margin %' }]), { value: int(m.orders), label: 'orders' }] })),
+    series: [{ key: 'value', name: 'Sales', color: cssVar('--series-1') }, ...(d.hasMargin ? [{ key: 'margin', name: 'Margin', color: cssVar('--series-2') }] : [])], fmt: moneyFull, fmtAxis: compact, height: 260,
+    labels: d.byMonth.length <= 18, line: d.byMonth.length > 1, ariaLabel: 'Sales by month',
+  }), d.byMonth, [{ label: 'Month', get: (r) => monthLabel(r.month) }, { label: 'Sales', get: (r) => moneyFull(r.value), num: 1 },
+    ...(d.hasMargin ? [{ label: 'Margin', get: (r) => moneyFull(r.margin), num: 1 }, { label: 'Margin %', get: mp, num: 1 }] : []), { label: 'Orders', get: (r) => int(r.orders), num: 1 }],
+  d.hasMargin ? [{ name: 'Sales', color: 'var(--series-1)' }, { name: 'Margin', color: 'var(--series-2)' }] : null);
 
   // order list: search, sort by any column, 100 rows at a time
   const cols = [
-    ['name', 'Order'], ['date', 'Date'], ['partner', 'Customer'], ['user', 'Salesperson', 'hide-sm'], ['amount', 'Revenue', 'num'],
+    ['name', 'Order'], ['date', 'Date'], ['partner', 'Customer'], ['user', 'Salesperson', 'hide-sm'], ['amount', 'Sales', 'num'],
     ...(d.hasMargin ? [['margin', 'Margin', 'num'], ['pct', 'Margin %', 'num hide-sm']] : []), ['invoiceStatus', 'Invoice', 'hide-sm'],
   ];
   const val = (r, k) => (k === 'pct' ? (r.amount ? r.margin / r.amount : -Infinity) : r[k]);
@@ -536,7 +551,7 @@ const filterQuery = (extra = {}) => {
 const backBar = (right = '') => `<div class="detail-top"><a class="btn" href="${hashOf({ ...readState(), view: '' })}">← Dashboard</a>${right}</div>`;
 
 // breakdown table: name, value (with bar), optional margin + %, count
-function breakdownTable(rows, label, limit, { margin = false, valueLabel = 'Revenue', countLabel = 'Orders', more = 'in the order list below' } = {}) {
+function breakdownTable(rows, label, limit, { margin = false, valueLabel = 'Sales', countLabel = 'Orders', more = 'in the order list below' } = {}) {
   if (!rows.length) return '<div class="empty">Nothing here.</div>';
   const max = Math.max(1, ...rows.map((r) => r.value));
   const mp = (r) => (r.margin == null || !r.value ? '–' : pct(r.margin / r.value));
@@ -561,8 +576,8 @@ function targetTable(rows) {
  * Searchable, sortable list, 100 rows at a time. cols: [{ k, label, cls, html(r), sort(r) }].
  * Optional chips (filter buttons by r.tags) and expand(r) → html shown under a row when it's clicked.
  */
-function listTable({ host, count, input, chips, rows, cols, sortKey, dir = -1, noun, total, match, expand }) {
-  let shown = 100, filter = 'all';
+function listTable({ host, count, input, chips, rows, cols, sortKey, dir = -1, noun, total, match, expand, filter = 'all' }) {
+  let shown = 100;
   const opened = new Set();
   const cmp = (x, y) => (x == null && y == null ? 0 : x == null ? 1 : y == null ? -1 : typeof x === 'string' ? x.localeCompare(y) * dir : (x - y) * dir);
   const draw = () => {
@@ -595,7 +610,8 @@ function renderInvoice() {
   const ageChip = (a) => status(a > 90 ? 'critical' : a > 60 ? 'serious' : a > 30 ? 'warning' : 'neutral', `${int(a)} day${a === 1 ? '' : 's'}`);
   $('#main').innerHTML = `${backBar()}
     <section class="section" style="margin-top:16px" aria-labelledby="h-inv">
-      <div class="section-head"><h2 id="h-inv">To invoice</h2><span class="sub">Confirmed sales orders Odoo marks "To invoice", any order date · ${esc(d.currency.name)}, excl. tax</span></div>
+      <div class="section-head"><h2 id="h-inv">To invoice</h2><span class="sub">Confirmed sales orders Odoo marks "To invoice", ordered since ${dmy(d.from)} · ${esc(d.currency.name)}, excl. tax</span></div>
+      ${d.older.count ? `<div class="banner">${int(d.older.count)} order${d.older.count === 1 ? '' : 's'} from before ${dmy(d.from)} (${moneyFull(d.older.toInvoice)}) still show as "To invoice" in Odoo. They're left out of the totals; pick <b>Before ${dmy(d.from)}</b> below to check them.</div>` : ''}
       <div class="tiles detail">
         ${tile('Still to invoice', `<span title="${moneyFull(t.toInvoice)}">${money(t.toInvoice)}</span>`, `<span>${d.hasAmounts ? 'untaxed amount left on the lines' : 'order totals'}</span>`)}
         ${tile('Orders', int(t.orders), '<span>waiting for an invoice</span>')}
@@ -609,12 +625,16 @@ function renderInvoice() {
       </div>
       <div class="card" style="margin-top:14px">
         <div class="card-head"><div><h3>Orders to invoice</h3><p><span id="o-count"></span> · click an order to see its lines</p></div>
-          <div class="tools"><input type="search" id="o-q" class="search" placeholder="Search order, customer, salesperson" aria-label="Search orders"><a class="btn sm" href="/api/export/to-invoice.csv?${filterQuery()}" download>CSV</a></div></div>
+          <div class="tools"><input type="search" id="o-q" class="search" placeholder="Search order, customer, salesperson" aria-label="Search orders"><a class="btn sm" id="o-csv" href="/api/export/to-invoice.csv?${filterQuery()}" download>CSV</a></div></div>
+        ${d.older.count ? `<div class="seg chips" id="o-chips" role="group" aria-label="Order date"><button class="btn sm on" data-f="current" aria-pressed="true">Since ${dmy(d.from)} <small>${int(d.total.orders)}</small></button><button class="btn sm" data-f="older" aria-pressed="false">Before ${dmy(d.from)} <small>${int(d.older.count)}</small></button></div>` : ''}
         <div class="table-wrap" id="t-orders"></div>
       </div>
     </section>`;
+  for (const r of d.orders) r.tags = [r.older ? 'older' : 'current'];
+  const chips = $('#o-chips');
+  if (chips) chips.addEventListener('click', (e) => { const b = e.target.closest('[data-f]'); if (b) $('#o-csv').href = `/api/export/to-invoice.csv?${filterQuery(b.dataset.f === 'older' ? { older: '1' } : {})}`; });
   listTable({
-    host: $('#t-orders'), count: $('#o-count'), input: $('#o-q'), rows: d.orders, noun: 'order', total: (r) => r.toInvoice, sortKey: 'age', dir: -1,
+    host: $('#t-orders'), count: $('#o-count'), input: $('#o-q'), rows: d.orders, chips, filter: 'current', noun: 'order', total: (r) => r.toInvoice, sortKey: 'age', dir: -1,
     match: (r) => `${r.name} ${r.partner} ${r.user} ${r.team}`,
     cols: [
       { k: 'name', label: 'Order', cls: 'mono', asc: 1, html: (r) => odooLink('sale.order', r.id, r.name), sort: (r) => r.name },
@@ -645,7 +665,7 @@ function renderTarget() {
     { k: 'user', label: 'Salesperson', cls: 'hide-sm', asc: 1, html: (r) => esc(r.user), sort: (r) => r.user },
     { k: 'stage', label: 'Stage', cls: 'hide-sm', asc: 1, html: (r) => `${esc(r.stage || '–')}<br><small>${int(r.probability)}%</small>`, sort: (r) => r.probability },
     dateCol,
-    { k: 'expected', label: 'Expected revenue', cls: 'num', html: (r) => moneyFull(r.expected), sort: (r) => r.expected },
+    { k: 'expected', label: 'Expected sales', cls: 'num', html: (r) => moneyFull(r.expected), sort: (r) => r.expected },
     { k: 'status', label: 'Status', asc: 1, html: (r) => status(...STATUS[r.status]), sort: (r) => ['late', 'open', 'won', 'lost'].indexOf(r.status) },
     ...(d.hasOrders ? [{ k: 'so', label: 'Sales orders', html: (r) => soLinks(r.orders), sort: (r) => (r.orders[0] ? r.orders[0].name : null) }] : []),
     { k: 'created', label: 'Created', cls: 'hide-sm', html: (r) => dmy(r.created), sort: (r) => r.created },
