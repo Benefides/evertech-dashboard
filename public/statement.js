@@ -15,7 +15,7 @@ const company = q.get('company') || '';
 $('#back').href = '/' + (q.get('back') ? '#' + q.get('back') : '');
 
 // the standard texts you change are remembered on this computer for the next statements (customer details and amounts are not)
-const KEEP = ['greeting', 'closing', 'query', 'regards', 'signature'];
+const KEEP = ['greeting', 'closing', 'query', 'regards', 'signature', 'bank'];
 const store = {
   get(k) { try { return localStorage.getItem('soa.' + k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem('soa.' + k, v); } catch { /* private mode */ } },
@@ -30,6 +30,26 @@ function letterText(d, total, overdue) {
     + (overdue > 0 ? `, of which ${cur} ${amt(overdue)} is overdue. We would appreciate your settlement of the overdue amount at your earliest convenience.`
       : '. Kindly arrange payment by the due dates shown below.')
     + ' If you have already made payment, please disregard this reminder and send us the remittance advice.';
+}
+
+// bank details: label / value rows; an edited version (saved as text, one "label<tab>value" or "label: value" per line) is read back the same way
+function bankRows(s) {
+  const kept = store.get('bank');
+  if (kept == null) return s.bank || [];
+  return kept.split('\n').map((l) => l.trim()).filter((l) => l && !/^bank details:?$/i.test(l))
+    .map((l) => { const m = l.match(/^([^\t:]+?)\s*(?:\t|:)\s*(.*)$/); return m ? [m[1], m[2]] : ['', l]; });
+}
+function bankHtml(s) {
+  const rows = bankRows(s);
+  if (!rows.length) return '';
+  return `<div class="bank" data-ed="bank"><b>Bank Details:</b><table>${rows.map(([k, v]) => `<tr><td class="k">${esc(k)}</td><td>${esc(v)}</td></tr>`).join('')}</table></div>`;
+}
+
+// product: the first one on a single line (cut with … if long), the rest as "+ N more"
+function prodCell(l) {
+  const ps = l.type === 'refund' || !l.products?.length ? [l.product] : l.products;
+  const more = ps.length - 1;
+  return `<span class="p1" title="${esc(ps.join(', '))}">${esc(ps[0] || '')}</span>${more > 0 ? `<span class="more">+ ${more} more</span>` : ''}`;
 }
 
 function pageHtml(p, i) {
@@ -48,13 +68,14 @@ function pageHtml(p, i) {
       <tbody>${lines.map((l) => `<tr data-id="${l.id}" class="${l.type === 'refund' ? 'credit' : ''}">
           <td class="sel"><input type="checkbox" checked aria-label="Include ${esc(l.name)}"></td>
           <td class="nw">${esc(l.name)}${l.type === 'refund' ? ' <small>(credit note)</small>' : ''}</td><td class="nw">${dmy(l.date)}</td>
-          <td data-ed="ref">${esc(l.ref)}</td><td data-ed="product">${esc(l.product)}</td>
+          <td data-ed="ref">${esc(l.ref)}</td><td class="prod" data-ed="product">${prodCell(l)}</td>
           <td class="r">${amt(l.amount)}</td><td class="nw">${dmy(l.due)}</td><td class="od">${l.overdue > 0 ? l.overdue : ''}</td></tr>`).join('')
         || '<tr><td class="sel"></td><td colspan="7">No outstanding invoices.</td></tr>'}
         <tr class="tot"><td class="sel"></td><td colspan="4">Total outstanding</td><td class="r" data-v="total"></td><td></td><td></td></tr>
         <tr class="odr"><td class="sel"></td><td colspan="4">of which overdue</td><td class="r" data-v="overdue"></td><td></td><td></td></tr></tbody></table>
     <table class="age"><thead><tr><th>Ageing (${esc(cur)})</th>${AGES.map(([n]) => `<th>${n}</th>`).join('')}</tr></thead>
       <tbody><tr><td></td>${AGES.map((_, k) => `<td data-age="${k}"></td>`).join('')}</tr></tbody></table>
+    ${bankHtml(s)}
     <div class="closing">${ed('closing', esc(kept('closing', s.closing)), 'p')}${ed('query', esc(kept('query', s.query)), 'p')}${ed('regards', esc(kept('regards', 'Kind regards,')), 'p')}</div>
     ${ed('signature', esc(kept('signature', [s.signature, s.company, s.email].filter(Boolean).join('\n'))), 'div', 'sign')}
   </section>`;
@@ -97,7 +118,7 @@ function setEditing(on) {
   $('#edit').setAttribute('aria-pressed', on);
   $('#edit').textContent = on ? '✓ Done editing' : '✎ Edit';
   $$('[data-ed]').forEach((n) => (on ? n.setAttribute('contenteditable', 'true') : n.removeAttribute('contenteditable')));
-  $('#hint').textContent = on ? 'Click any text to change it. Untick an invoice to leave it out; totals, ageing and the letter update. Greeting, closing and signature changes are remembered on this computer.'
+  $('#hint').textContent = on ? 'Click any text to change it. Untick an invoice to leave it out; totals, ageing and the letter update. Greeting, closing, signature and bank detail changes are remembered on this computer.'
     : 'Click Edit to change any text or leave out invoices before printing. Choose "Save as PDF" in the print window to get a file.';
 }
 function changed() { $('#reset').hidden = false; }

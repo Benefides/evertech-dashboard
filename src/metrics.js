@@ -323,6 +323,10 @@ const SOA = {
   query: process.env.SOA_QUERY || 'Should you have any query about this statement, please contact me directly.',
   signature: process.env.SOA_SIGNATURE || 'Account Manager',
   email: process.env.SOA_EMAIL || '',
+  // "Label: value" lines separated by |
+  bank: (process.env.SOA_BANK || 'Account Title: Evertech IT Infrastructure LLC|Bank: Abu Dhabi Commercial Bank|Branch Address: Al Rigga, Dubai, U.A.E'
+    + '|Account No: 13275719920001|IBAN: AE970030013275719920001|Swift Code: ADCBAEAA|Currency: AED')
+    .split('|').map((l) => l.trim()).filter(Boolean).map((l) => { const i = l.indexOf(':'); return i < 0 ? ['', l] : [l.slice(0, i).trim(), l.slice(i + 1).trim()]; }),
 };
 // one customer even when Odoo holds the company twice (duplicate contacts): same name ignoring case, spaces and punctuation
 const custKey = (name) => String(name || '').toUpperCase().replace(/[^A-Z0-9\u0600-\u06FF]/g, '');
@@ -371,7 +375,7 @@ function statement(ds, partnerIds, f) {
   const p = recs.find((x) => x.street || x.city) || recs[0] || { name: rows[0]?.partner || '' };
   const company = SOA.company || ds.companies.find((c) => c.id === rows[0]?.companyId)?.name || ds.companies[0]?.name || '';
   return { available: true, date: f.today, customer: { id: partnerIds.join('_'), ...p }, soa: { ...SOA, company },
-    lines: rows.map((r) => ({ id: r.id, name: r.name, type: r.type, date: r.date, ref: r.ref, product: r.product, amount: r.residual, total: r.total, due: r.due, overdue: r.overdue })),
+    lines: rows.map((r) => ({ id: r.id, name: r.name, type: r.type, date: r.date, ref: r.ref, product: r.product, products: r.products || [], amount: r.residual, total: r.total, due: r.due, overdue: r.overdue })),
     total: sum(rows, (r) => r.residual), overdue: sum(rows.filter((r) => r.overdue > 0), (r) => r.residual) };
 }
 

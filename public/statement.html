@@ -35,6 +35,10 @@
     table.inv .r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
     table.inv .nw { white-space: nowrap; }
     table.inv td.od { color: var(--red); font-weight: 700; text-align: right; }
+    table.inv td.prod { width: 30%; max-width: 0; white-space: nowrap; }
+    table.inv td.prod .p1 { display: inline-block; max-width: calc(100% - 58px); overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+    table.inv td.prod .more { color: var(--muted); margin-left: 4px; }
+    table.inv td.prod .p1:only-child { max-width: 100%; }
     table.inv tr.credit td { color: #555; font-style: italic; }
     table.inv tr.tot td { border-top: 2px solid var(--rule); border-bottom: 2px solid var(--rule); font-weight: 700; font-size: 12px; padding: 9px 6px; }
     table.inv tr.odr td { color: var(--red); font-weight: 700; font-size: 12px; border-bottom: 0; padding-top: 10px; }
@@ -43,6 +47,11 @@
     table.age th { background: var(--head); font-size: 11.5px; font-weight: 700; padding: 8px 6px; text-align: right; }
     table.age th:first-child { text-align: right; padding-right: 30px; }
     table.age td { font-size: 11.5px; padding: 8px 6px; text-align: right; font-variant-numeric: tabular-nums; }
+    .bank { margin-top: 26px; display: inline-block; min-width: 50%; border: 1px solid #d5e2dd; border-left: 3px solid var(--rule); border-radius: 2px; padding: 10px 14px 8px; font-size: 12px; }
+    .bank > b { display: block; color: var(--green); margin-bottom: 5px; font-size: 12.5px; }
+    .bank table { border-collapse: collapse; width: auto; }
+    .bank td { padding: 1.5px 0; vertical-align: top; }
+    .bank td.k { font-weight: 700; padding-right: 18px; white-space: nowrap; }
     .closing { margin-top: 26px; }
     .closing p { margin: 0 0 9px; white-space: pre-line; }
     .sign { margin-top: 56px; white-space: pre-line; }
