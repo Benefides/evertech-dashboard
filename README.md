@@ -40,6 +40,14 @@ npm start
 
 **Other hosts:** any small Node 22 host works: a VPS, Azure App Service or Railway. Serve it over HTTPS and set `COOKIE_SECURE=1` (and `TRUST_PROXY=1` behind the host's proxy). No database is needed.
 
+## Sign-in
+
+- **Personal email codes (recommended):** set `DASHBOARD_USERS` to the people who may sign in (`ebin@evertechme.com, sara@evertechme.com`, or `@evertechme.com` for everyone at that domain). Each person enters their email, gets a 6-digit code from your Microsoft 365 mailbox, and stays signed in for 14 days. Removing someone from the list signs them out.
+- **Sending the codes**, one of:
+  - **Microsoft Graph** (recommended): in the Entra admin centre, register an app, add the **Mail.Send** *application* permission for Microsoft Graph and grant admin consent, create a client secret. Set `MS_TENANT_ID`, `MS_CLIENT_ID`, `MS_CLIENT_SECRET` and `MAIL_FROM` (the mailbox the codes come from). Optionally limit the app to that one mailbox with an Exchange application access policy.
+  - **SMTP**: `SMTP_USER` / `SMTP_PASS` of a mailbox with **Authenticated SMTP** switched on (Microsoft 365 admin centre → the user → Mail → Manage email apps). Microsoft is retiring password-based SMTP for Microsoft 365, so prefer Graph.
+- **Shared password:** if `DASHBOARD_USERS` is empty, `DASHBOARD_PASSWORD` works as before. The TV link (`TV_TOKEN`) works in both modes.
+
 ## Connect to Odoo
 
 1. **Choose the Odoo user.** Use an existing internal user, or a dedicated one such as "Dashboard API". That user needs read access to Sales and CRM, and access to every company you want to see.

@@ -5,6 +5,7 @@ const cookieParser = require('cookie-parser');
 const data = require('./data');
 const metrics = require('./metrics');
 const odoo = require('./odoo');
+const mail = require('./mail');
 
 const app = express();
 app.disable('x-powered-by');
@@ -19,39 +20,108 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------- access: one shared password for staff, plus an optional read-only link for a TV screen ----------
+// ---------- access ----------
+// Personal sign-in: DASHBOARD_USERS lists who may sign in (emails, or "@evertechme.com" for a whole domain); each person gets a
+// 6-digit code by email (Microsoft 365, see mail.js). Without DASHBOARD_USERS: one shared DASHBOARD_PASSWORD (or open if unset).
+// TV_TOKEN gives a read-only link for a meeting-room screen either way.
 const SECRET = process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const PASSWORD = process.env.DASHBOARD_PASSWORD || '';
 const TV_TOKEN = process.env.TV_TOKEN || '';
+const USERS = (process.env.DASHBOARD_USERS || '').split(/[,;\s]+/).map((u) => u.trim().toLowerCase()).filter(Boolean);
+const MODE = USERS.length ? 'otp' : PASSWORD ? 'password' : 'open';
+const OTP_MIN = Number(process.env.OTP_MINUTES || 10);
+const allowed = (email) => !!email && USERS.some((u) => (u.startsWith('@') ? email.endsWith(u) : email === u));
 const sign = (v) => crypto.createHmac('sha256', SECRET).update(v).digest('hex');
-const issue = (res, kind) => {
-  const exp = Date.now() + (kind === 'tv' ? 365 : 14) * 86400000;
-  const v = `${kind}.${exp}`;
-  res.cookie('dash', `${v}.${sign(v)}`, { httpOnly: true, sameSite: 'lax', secure: process.env.COOKIE_SECURE === '1', maxAge: exp - Date.now() });
-};
-function session(req) {
-  if (!PASSWORD) return 'open';
-  const c = req.cookies.dash || '';
-  const i = c.lastIndexOf('.');
+const b64 = (s) => Buffer.from(s).toString('base64url'), unb64 = (s) => Buffer.from(s, 'base64url').toString();
+const cookieOpts = (ms) => ({ httpOnly: true, sameSite: 'lax', secure: process.env.COOKIE_SECURE === '1', maxAge: ms });
+// signed cookie value: parts joined by "." + signature (parts must not contain "."; emails are base64url-encoded)
+const seal = (parts) => { const v = parts.join('.'); return `${v}.${sign(v)}`; };
+function unseal(c) {
+  const i = (c || '').lastIndexOf('.');
   if (i < 0) return null;
   const v = c.slice(0, i), sig = c.slice(i + 1);
-  const ok = sig.length === 64 && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(sign(v)));
-  const [kind, exp] = v.split('.');
-  return ok && Number(exp) > Date.now() ? kind : null;
+  return sig.length === 64 && crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(sign(v))) ? v.split('.') : null;
+}
+const issue = (res, kind, email = '') => {
+  const exp = Date.now() + (kind === 'tv' ? 365 : 14) * 86400000;
+  res.cookie('dash', seal(email ? [kind, exp, b64(email)] : [kind, exp]), cookieOpts(exp - Date.now()));
+};
+/** { kind: 'staff' | 'user' | 'tv' | 'open', email? } or null */
+function session(req) {
+  if (MODE === 'open') return { kind: 'open' };
+  const p = unseal(req.cookies.dash);
+  if (!p || Number(p[1]) <= Date.now()) return null;
+  if (p[0] === 'tv') return { kind: 'tv' };
+  if (MODE === 'otp') {
+    const email = p[0] === 'user' && p[2] ? unb64(p[2]) : '';
+    return allowed(email) ? { kind: 'user', email } : null;   // removed from DASHBOARD_USERS = signed out
+  }
+  return p[0] === 'staff' ? { kind: 'staff' } : null;
 }
 const eq = (a, b) => { const x = Buffer.from(sign(String(a))), y = Buffer.from(sign(String(b))); return crypto.timingSafeEqual(x, y); };
 
-const attempts = new Map();
+// simple in-memory limits (per server instance): wrong passwords/codes per IP, codes sent per email
+const limits = new Map();
+function limited(key, max, minutes) {
+  const now = Date.now(), a = limits.get(key) || { n: 0, t: now };
+  if (now - a.t > minutes * 60000) { a.n = 0; a.t = now; }
+  a.n++; limits.set(key, a);
+  return a.n > max;
+}
+
+app.get('/api/auth', (req, res) => res.json({ mode: MODE, minutes: OTP_MIN, mailReady: MODE !== 'otp' || mail.configured() }));
+
 app.post('/api/login', (req, res) => {
-  const ip = req.ip;
-  const a = attempts.get(ip) || { n: 0, t: Date.now() };
-  if (Date.now() - a.t > 15 * 60000) { a.n = 0; a.t = Date.now(); }
-  if (a.n >= 10) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
-  if (!PASSWORD || !eq(req.body?.password || '', PASSWORD)) { a.n++; attempts.set(ip, a); return res.status(401).json({ error: 'Wrong password.' }); }
-  attempts.delete(ip);
+  if (MODE !== 'password') return res.status(400).json({ error: 'Sign in with your email instead.' });
+  if (limited('pw:' + req.ip, 10, 15)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
+  if (!eq(req.body?.password || '', PASSWORD)) return res.status(401).json({ error: 'Wrong password.' });
+  limits.delete('pw:' + req.ip);
   issue(res, 'staff');
   res.json({ ok: true });
 });
+
+// step 1: email → a 6-digit code by mail. Only a signed fingerprint of the code is kept, in a short-lived cookie (works on serverless hosts too).
+app.post('/api/otp/request', async (req, res) => {
+  if (MODE !== 'otp') return res.status(400).json({ error: 'Email sign-in is not switched on.' });
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'Enter your work email address.' });
+  if (!allowed(email)) return res.status(403).json({ error: "This email doesn't have access to the dashboard. Ask the administrator to add it." });
+  if (!mail.configured()) return res.status(500).json({ error: 'Sending email is not set up on the server yet (Microsoft 365 settings missing).' });
+  if (limited('send:' + email, 5, 15) || limited('sendip:' + req.ip, 20, 15)) return res.status(429).json({ error: 'Too many codes requested. Try again in 15 minutes.' });
+  const code = String(crypto.randomInt(0, 1e6)).padStart(6, '0');
+  const exp = Date.now() + OTP_MIN * 60000, nonce = crypto.randomBytes(6).toString('hex');
+  try {
+    await mail.send({
+      to: email,
+      subject: `${code} is your Evertech dashboard sign-in code`,
+      text: `Your sign-in code for the Evertech Sales & CRM dashboard is ${code}.\n\nIt expires in ${OTP_MIN} minutes. If you didn't try to sign in, you can ignore this email.`,
+      html: `<div style="font-family:Arial,sans-serif;font-size:14px;color:#222">
+        <p>Your sign-in code for the <b>Evertech Sales &amp; CRM dashboard</b> is:</p>
+        <p style="font-size:30px;font-weight:700;letter-spacing:6px;margin:14px 0;color:#155e4b">${code}</p>
+        <p>It expires in ${OTP_MIN} minutes. If you didn't try to sign in, you can ignore this email.</p></div>`,
+    });
+  } catch (e) {
+    console.error('[mail]', e.message);
+    return res.status(502).json({ error: `Couldn't send the email: ${e.message}` });
+  }
+  res.cookie('otp', seal([b64(email), exp, nonce, sign(`${email}|${code}|${exp}|${nonce}`)]), cookieOpts(OTP_MIN * 60000));
+  res.json({ ok: true, email, minutes: OTP_MIN });
+});
+
+// step 2: the code → signed in for 14 days
+app.post('/api/otp/verify', (req, res) => {
+  const p = unseal(req.cookies.otp);
+  if (!p || Number(p[1]) <= Date.now()) return res.status(400).json({ error: 'The code has expired. Ask for a new one.', expired: true });
+  const email = unb64(p[0]), code = String(req.body?.code || '').replace(/\D/g, '');
+  if (limited('otp:' + email, 5, OTP_MIN) || limited('otpip:' + req.ip, 20, 15)) return res.status(429).json({ error: 'Too many wrong codes. Ask for a new code in a few minutes.' });
+  if (code.length !== 6 || !eq(sign(`${email}|${code}|${p[1]}|${p[2]}`), p[3])) return res.status(401).json({ error: 'That code is not right. Check the email and try again.' });
+  if (!allowed(email)) return res.status(403).json({ error: "This email doesn't have access to the dashboard." });
+  limits.delete('otp:' + email);
+  res.clearCookie('otp');
+  issue(res, 'user', email);
+  res.json({ ok: true, email });
+});
+
 app.post('/api/logout', (req, res) => { res.clearCookie('dash'); res.json({ ok: true }); });
 app.get('/tv/:token', (req, res) => {
   if (!TV_TOKEN || !eq(req.params.token, TV_TOKEN)) return res.status(404).send('Not found');
@@ -64,7 +134,7 @@ app.use(express.static(path.join(__dirname, '..', 'public'), { index: 'index.htm
 app.use('/api', (req, res, next) => {
   const s = session(req);
   if (!s) return res.status(401).json({ error: 'Please sign in.' });
-  req.kind = s; next();
+  req.kind = s.kind; req.email = s.email || ''; next();
 });
 
 const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => {
@@ -87,7 +157,7 @@ function filters(q) {
 app.get('/api/meta', wrap(async (req, res) => {
   const ds = await data.load();
   res.json({ source: ds.source, odooUrl: ds.source === 'odoo' ? ds.odooUrl : null, currency: ds.currency, fetchedAt: ds.fetchedAt,
-    companies: ds.companies, teams: ds.teams, users: ds.users, kind: req.kind, canLogout: !!PASSWORD && req.kind === 'staff',
+    companies: ds.companies, teams: ds.teams, users: ds.users, kind: req.kind, email: req.email, canLogout: req.kind === 'staff' || req.kind === 'user',
     counts: { orders: ds.orders.length, leads: ds.leads.length } });
 }));
 
@@ -175,7 +245,9 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Evertech Sales & CRM dashboard on http://localhost:${PORT}`);
     console.log(process.env.DEMO === '1' || !odoo.configured() ? '  Using DEMO data (set ODOO_* in .env to connect)' : `  Odoo: ${process.env.ODOO_URL} / ${process.env.ODOO_DB}`);
-    if (!PASSWORD) console.log('  WARNING: DASHBOARD_PASSWORD is not set, so anyone who can reach this URL can see the data.');
+    if (MODE === 'otp') console.log(`  Sign-in: email code for ${USERS.length} allowed address(es) via ${mail.provider() || '(mail not set up!)'}`);
+    if (MODE === 'otp' && !mail.configured()) console.log('  WARNING: DASHBOARD_USERS is set but Microsoft 365 mail is not configured, so nobody can sign in.');
+    if (MODE === 'open') console.log('  WARNING: neither DASHBOARD_USERS nor DASHBOARD_PASSWORD is set, so anyone who can reach this URL can see the data.');
     if (!process.env.SESSION_SECRET) console.log('  Note: set SESSION_SECRET so sign-ins survive restarts.');
   });
   data.load().catch((e) => console.error('  First data load failed:', e.message));

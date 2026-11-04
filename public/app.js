@@ -101,19 +101,68 @@ function writeState(s) { history.replaceState(null, '', hashOf(s)); }
 const detailHref = (range) => hashOf({ ...readState(), view: 'revenue', range });
 const viewHref = (view, extra = {}) => hashOf({ ...readState(), view, ...extra });
 
-// ---------- login ----------
-function renderLogin(err) {
-  app.innerHTML = `<div class="login"><form id="lf">
-    <img src="/logo.png" alt="EverTech" class="logo-light"><img src="/logo-dark.png" alt="EverTech" class="logo-dark">
-    <h1>Sales & CRM dashboard</h1><p>Enter the dashboard password.</p>
-    <input type="password" name="password" autocomplete="current-password" required autofocus>
-    ${err ? `<div class="error" style="margin:0 0 12px">${esc(err)}</div>` : ''}
-    <button class="btn primary">Sign in</button></form></div>`;
+// ---------- login: personal email code (when the server has DASHBOARD_USERS) or the shared password ----------
+let AUTH = null;
+const post = async (path, body) => {   // like api() but a 401 here means "wrong code/password", not "show the login"
+  const res = await fetch('/api' + path, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok) { const e = new Error(d.error || `Error ${res.status}`); e.expired = d.expired; throw e; }
+  return d;
+};
+const loginBox = (inner) => `<div class="login"><form id="lf" novalidate>
+  <img src="/logo.png" alt="EverTech" class="logo-light"><img src="/logo-dark.png" alt="EverTech" class="logo-dark">
+  <h1>Sales & CRM dashboard</h1>${inner}</form></div>`;
+const errBox = (err) => (err ? `<div class="error" style="margin:0 0 12px" role="alert">${esc(err)}</div>` : '');
+
+async function renderLogin(err) {
+  if (!AUTH) { try { AUTH = await (await fetch('/api/auth', { credentials: 'same-origin' })).json(); } catch { AUTH = { mode: 'password' }; } }
+  if (AUTH.mode === 'otp') return renderEmailStep(err);
+  app.innerHTML = loginBox(`<p>Enter the dashboard password.</p>
+    <input type="password" name="password" autocomplete="current-password" required autofocus>${errBox(err)}
+    <button class="btn primary">Sign in</button>`);
   $('#lf').onsubmit = async (e) => {
     e.preventDefault();
-    try { await api('/login', { method: 'POST', body: { password: e.target.password.value } }); boot(); }
-    catch (er) { if (er.message !== 'signin') renderLogin(er.message); }
+    try { await post('/login', { password: e.target.password.value }); boot(); } catch (er) { renderLogin(er.message); }
   };
+}
+
+function renderEmailStep(err, email) {
+  let last = email || '';
+  try { last = last || localStorage.getItem('loginEmail') || ''; } catch (_) {}
+  app.innerHTML = loginBox(`<p>Sign in with your work email. We'll send you a 6-digit code.</p>
+    ${AUTH.mailReady === false ? errBox('Sending email is not set up on the server yet, so sign-in codes cannot be sent. Ask the administrator.') : ''}
+    <input type="email" name="email" autocomplete="email" placeholder="you@evertechme.com" value="${esc(last)}" required autofocus>${errBox(err)}
+    <button class="btn primary" id="go">Send code</button>`);
+  $('#lf').onsubmit = async (e) => {
+    e.preventDefault();
+    const em = e.target.email.value.trim(), b = $('#go');
+    b.disabled = true; b.textContent = 'Sending…';
+    try {
+      const r = await post('/otp/request', { email: em });
+      try { localStorage.setItem('loginEmail', em); } catch (_) {}
+      renderCodeStep(r.email, r.minutes);
+    } catch (er) { renderEmailStep(er.message, em); }
+  };
+}
+
+function renderCodeStep(email, minutes, err) {
+  app.innerHTML = loginBox(`<p>We sent a code to <b>${esc(email)}</b>. It's valid for ${int(minutes)} minutes.</p>
+    <input name="code" class="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="••••••" aria-label="6-digit code" required autofocus>${errBox(err)}
+    <button class="btn primary" id="go">Sign in</button>
+    <div class="login-links"><button type="button" class="link" id="again">Send a new code</button><button type="button" class="link" id="other">Use a different email</button></div>`);
+  const input = $('#lf').code;
+  input.oninput = () => { input.value = input.value.replace(/\D/g, '').slice(0, 6); if (input.value.length === 6) $('#lf').requestSubmit(); };
+  $('#lf').onsubmit = async (e) => {
+    e.preventDefault();
+    if (input.value.length !== 6) return;
+    $('#go').disabled = true;
+    try { await post('/otp/verify', { code: input.value }); boot(); }
+    catch (er) { if (er.expired) renderEmailStep(er.message, email); else renderCodeStep(email, minutes, er.message); }
+  };
+  $('#again').onclick = async () => {
+    try { const r = await post('/otp/request', { email }); renderCodeStep(r.email, r.minutes, null); } catch (er) { renderCodeStep(email, minutes, er.message); }
+  };
+  $('#other').onclick = () => renderEmailStep(null, '');
 }
 
 // ---------- shell ----------
@@ -129,6 +178,7 @@ function renderShell() {
     <span class="src ${META.source === 'demo' ? 'demo' : ''}" id="src"></span>
     <button class="btn tv-hide" id="refresh" title="Fetch fresh data from Odoo">↻ Refresh</button>
     <button class="btn icon tv-hide" id="theme" title="Light / dark" aria-label="Toggle light or dark theme"><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.25" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.75a6.25 6.25 0 0 1 0 12.5Z" fill="currentColor"/></svg></button>
+    ${META.email ? `<span class="who tv-hide" title="Signed in as ${esc(META.email)}">${esc(META.email)}</span>` : ''}
     ${META.canLogout ? '<button class="btn tv-hide" id="logout">Sign out</button>' : ''}
   </header>
   <div class="filters" role="search">
