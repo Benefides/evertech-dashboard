@@ -20,7 +20,7 @@
 
     .page { width: 210mm; min-height: 297mm; margin: 18px auto; background: #fff; padding: 16mm 15mm 18mm; box-shadow: 0 2px 18px rgba(0, 0, 0, .12); }
     .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; padding-bottom: 8px; border-bottom: 2.5px solid var(--rule); }
-    .co { color: var(--green); font-size: 22px; font-weight: 700; padding-top: 4px; }
+    .top .logo { height: 66px; display: block; margin: -14px 0 -12px -8px; }   /* the PNG has empty space around the mark */
     .title { text-align: right; }
     .title h1 { margin: 0; font-size: 26px; font-weight: 700; color: #111; line-height: 1.1; }
     .title .asat { color: var(--muted); font-size: 12px; }
@@ -74,7 +74,7 @@
       th, table.inv tr.tot td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       .page + .page { page-break-before: always; }
     }
-    @media (max-width: 820px) { .page { width: auto; margin: 10px; padding: 18px 14px; min-height: 0; } .co { font-size: 17px; } .title h1 { font-size: 19px; } }
+    @media (max-width: 820px) { .page { width: auto; margin: 10px; padding: 18px 14px; min-height: 0; } .top .logo { height: 48px; margin: -10px 0 -8px -6px; } .title h1 { font-size: 19px; } }
   </style>
 </head>
 <body>

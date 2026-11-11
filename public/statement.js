@@ -32,6 +32,26 @@ function letterText(d, total, overdue) {
     + ' If you have already made payment, please disregard this reminder and send us the remittance advice.';
 }
 
+// customer address without repeats: Odoo often has City and State both "Dubai", Street 2 = Street, or the city already in the street line
+function addressLines(c) {
+  const norm = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9\u0600-\u06ff]+/g, ' ').trim();
+  const seen = [norm(c.name)], out = [];
+  const add = (line) => {
+    const n = norm(line);
+    if (!n || seen.some((x) => x === n || (` ${x} `).includes(` ${n} `))) return;   // same as, or already inside, something shown
+    seen.push(n); out.push(String(line).trim());
+  };
+  add(c.street); add(c.street2);
+  const place = [];
+  for (const part of [c.city, c.state, c.zip]) {
+    const n = norm(part);
+    if (n && !place.some((x) => norm(x) === n) && !seen.some((x) => (` ${x} `).includes(` ${n} `))) place.push(String(part).trim());
+  }
+  add(place.join(' '));
+  if (c.country && !/^united arab emirates$/i.test(c.country)) add(c.country);
+  return out;
+}
+
 // bank details: label / value rows; an edited version (saved as text, one "label<tab>value" or "label: value" per line) is read back the same way
 function bankRows(s) {
   const kept = store.get('bank');
@@ -54,12 +74,12 @@ function prodCell(l) {
 
 function pageHtml(p, i) {
   const d = p.d, c = d.customer, s = d.soa, cur = d.currency?.name || 'AED';
-  const addr = [c.street, c.street2, [c.city, c.state, c.zip].filter(Boolean).join(' '), c.country && c.country !== 'United Arab Emirates' ? c.country : ''].filter(Boolean).join('\n');
+  const addr = addressLines(c).join('\n');
   const kept = (k, def) => store.get(k) ?? def;
   const lines = [...d.lines].sort((a, b) => b.date.localeCompare(a.date) || b.name.localeCompare(a.name));   // newest first
   const ed = (k, html, tag = 'div', cls = '') => `<${tag} class="${cls}" data-ed="${k}">${html}</${tag}>`;
   return `<section class="page" data-p="${i}">
-    <div class="top">${ed('company', esc(s.company), 'div', 'co')}
+    <div class="top"><img class="logo" src="/logo.png" alt="${esc(s.company || 'EverTech')}">
       <div class="title"><h1>Statement of Account</h1>${ed('asat', `As at ${dmy(d.date)}`, 'div', 'asat')}</div></div>
     <div class="cust">${ed('name', esc(c.name), 'div', 'name')}${ed('addr', esc(addr), 'div', 'addr')}</div>
     ${ed('greeting', esc(kept('greeting', s.greeting)), 'p', 'greet')}
