@@ -84,7 +84,9 @@ async function fromOdoo() {
     if (hasInvoiceAmounts) {
       const left = new Map();
       for (const l of invoiceLines) left.set(l.orderId, (left.get(l.orderId) || 0) + l.toInvoice);
-      for (const o of orders) if (left.has(o.id)) o.toInvoice = left.get(o.id);
+      // down-payment lines carry a negative amount "to invoice" (deducted on the final invoice), so an order can net below zero;
+      // keep Odoo's net figure, and count only what's actually left to bill
+      for (const o of orders) if (left.has(o.id)) { o.toInvoiceNet = left.get(o.id); o.toInvoice = Math.max(0, o.toInvoiceNet); }
     }
   }
   const toLine = (l) => ({ id: l.id, orderId: m2o(l.order_id).id, productId: m2o(l.product_id).id, product: m2o(l.product_id).name || l.name,

@@ -308,11 +308,13 @@ function renderMain() {
     const short = (m) => MONTHS[Number(m.slice(5)) - 1];
     if (g.cur == null) return tile('GP growth', '–', '<span>needs the Sales Margin module in Odoo</span>');
     const v = g.value == null ? '–' : `<span class="${g.value >= 0 ? 'up' : 'down'}">${g.value >= 0 ? '+' : '−'}${Math.abs(g.value * 100).toFixed(1)}%</span>`;
-    return tile('GP growth', v, `<span>${short(g.month)} ${money(g.cur)} vs ${short(g.prevMonth)} ${money(g.prev)}</span>`, '', 'gp');
+    return tile('GP growth', v, `<span>${short(g.month)} ${money(g.cur)} vs ${short(g.prevMonth)} ${money(g.prev)}</span>${g.noCost ? ` ${status('warning', 'includes orders without cost')}` : ''}`, '', 'gp');
   };
-  const marginTile = (label, m, mPrev, rev, note, cls = '', href = '') => (m == null
+  // a warning when some orders have no cost in Odoo (their whole sale counts as margin)
+  const noCostWarn = (nc) => (nc && nc.count ? ` ${status('warning', `${int(nc.count)} order${nc.count === 1 ? '' : 's'} without cost`)}` : '');
+  const marginTile = (label, m, mPrev, rev, note, cls = '', href = '', nc = null) => (m == null
     ? tile(label, '–', '<span>needs the Sales Margin module in Odoo</span>', '', cls)
-    : tile(label, `<span title="${moneyFull(m)}">${money(m)}</span>`, delta(m, mPrev), ` <span>${rev ? pct(m / rev) + ' of sales · ' : ''}${note}</span>`, cls, href));
+    : tile(label, `<span title="${moneyFull(m)}">${money(m)}</span>`, delta(m, mPrev), ` <span>${rev ? pct(m / rev) + ' of sales · ' : ''}${note}</span>${noCostWarn(nc)}`, cls, href));
 
   $('#main').innerHTML = `
     ${META.source === 'demo' ? '<div class="banner tv-hide">Showing sample data. Add your Odoo URL, database, login and API key to <b>.env</b> to see Evertech\'s real numbers.</div>' : ''}
@@ -323,10 +325,10 @@ function renderMain() {
       <div class="tiles">
         <a class="tile hero link" href="${per}" title="Show the orders behind this number"><div class="k">Sales <span class="go" aria-hidden="true">›</span></div><div class="v" title="${moneyFull(k.revenue.value)}">${money(k.revenue.value)}</div>
           <div class="row"><div class="d">${delta(k.revenue.value, k.revenue.prev)} <span>${vs}</span></div><div id="spark-rev"></div></div></a>
-        ${marginTile('Margin', k.margin.value, k.margin.prev, k.margin.revenue, vs, '', per)}
+        ${marginTile('Margin', k.margin.value, k.margin.prev, k.margin.revenue, vs, '', per, k.margin.noCost)}
         ${gpTile(k.gpGrowth)}
         ${tile('Sales YTD', `<span title="${moneyFull(y.revenue)}">${money(y.revenue)}</span>`, delta(y.revenue, y.revenuePrev), ` <span>${ytdLabel}</span>`, 'ytd', ytdH)}
-        ${marginTile('Margin YTD', y.margin, y.marginPrev, y.revenue, ytdLabel, 'ytd', ytdH)}
+        ${marginTile('Margin YTD', y.margin, y.marginPrev, y.revenue, ytdLabel, 'ytd', ytdH, y.noCost)}
         ${tile('Orders', int(k.orders.value), delta(k.orders.value, k.orders.prev), ` <span>in the period</span>`, '', per)}
         ${tile('Orders YTD', int(y.orders), delta(y.orders, y.ordersPrev), ` <span>${ytdLabel}</span>`, 'ytd', ytdH)}
         ${tile('To invoice', money(k.toInvoice.value), `<span>${int(k.toInvoice.count)} orders since ${dmy(k.toInvoice.from)}</span>${k.toInvoice.olderCount ? ` ${status('warning', `${int(k.toInvoice.olderCount)} older to check`)}` : ''}`, '', '', viewHref('invoice'))}
@@ -547,9 +549,11 @@ function renderDetail() {
         <div class="card"><div class="card-head"><div><h3>By customer</h3><p>Top 10</p></div></div><div class="table-wrap">${breakdown(d.byCustomer, 'Customer', 10)}</div></div>
         <div class="card"><div class="card-head"><div><h3>By sales team</h3></div></div><div class="table-wrap">${breakdown(d.byTeam, 'Team', 10)}</div></div>
       </div>
+      ${t.noCost ? `<div class="banner">${int(t.noCost)} order${t.noCost === 1 ? '' : 's'} (${moneyFull(t.noCostAmount)} of sales) have no cost on their lines in Odoo, so their whole sale counts as margin. Pick <b>Without cost in Odoo</b> below to see them, then add the cost (or purchase price) in Odoo.</div>` : ''}
       <div class="card" style="margin-top:14px">
         <div class="card-head"><div><h3>Orders</h3><p id="o-count"></p></div>
           <div class="tools"><input type="search" id="o-q" class="search" placeholder="Search order, customer, salesperson" aria-label="Search orders"><a class="btn sm" href="/api/export/orders.csv?${qp}" download>CSV</a></div></div>
+        ${t.noCost ? `<div class="seg chips" id="o-chips" role="group" aria-label="Filter"><button class="btn sm on" data-f="all" aria-pressed="true">All <small>${int(t.orders)}</small></button><button class="btn sm" data-f="nocost" aria-pressed="false">Without cost in Odoo <small>${int(t.noCost)}</small></button></div>` : ''}
         <div class="table-wrap" id="t-orders"></div>
       </div>
     </section>`;
@@ -569,15 +573,15 @@ function renderDetail() {
     ...(d.hasMargin ? [['margin', 'Margin', 'num'], ['pct', 'Margin %', 'num hide-sm']] : []), ['invoiceStatus', 'Invoice', 'hide-sm'],
   ];
   const val = (r, k) => (k === 'pct' ? (r.amount ? r.margin / r.amount : -Infinity) : r[k]);
-  let sortKey = 'date', dir = -1, shown = 100;
+  let sortKey = 'date', dir = -1, shown = 100, only = 'all';
   const draw = () => {
     const q = $('#o-q').value.trim().toLowerCase();
-    const rows = d.orders.filter((r) => !q || `${r.name} ${r.partner} ${r.user} ${r.team}`.toLowerCase().includes(q))
+    const rows = d.orders.filter((r) => (only === 'all' || r.noCost) && (!q || `${r.name} ${r.partner} ${r.user} ${r.team}`.toLowerCase().includes(q)))
       .sort((a, b) => { const x = val(a, sortKey), y = val(b, sortKey); return (typeof x === 'string' ? x.localeCompare(y) : (x ?? 0) - (y ?? 0)) * dir; });
     $('#o-count').textContent = `${int(rows.length)} order${rows.length === 1 ? '' : 's'} · ${moneyFull(rows.reduce((a, r) => a + r.amount, 0))}`;
     $('#t-orders').innerHTML = rows.length ? `<table><thead><tr>${cols.map(([k, l, c = '']) => `<th class="${c}"><button class="sort" data-k="${k}" aria-sort="${sortKey === k ? (dir > 0 ? 'ascending' : 'descending') : 'none'}">${l}${sortKey === k ? (dir > 0 ? ' ▲' : ' ▼') : ''}</button></th>`).join('')}</tr></thead><tbody>
       ${rows.slice(0, shown).map((r) => `<tr><td class="mono">${odooLink('sale.order', r.id, r.name)}</td><td>${dmy(r.date)}</td><td class="name">${esc(r.partner)}</td><td class="hide-sm">${esc(r.user)}</td>
-        <td class="num">${moneyFull(r.amount)}</td>${d.hasMargin ? `<td class="num">${moneyFull(r.margin)}</td><td class="num hide-sm">${r.amount ? pct(r.margin / r.amount) : '–'}</td>` : ''}
+        <td class="num">${moneyFull(r.amount)}</td>${d.hasMargin ? `<td class="num">${moneyFull(r.margin)}</td><td class="num hide-sm">${r.noCost ? status('warning', 'no cost') : r.amount ? pct(r.margin / r.amount) : '–'}</td>` : ''}
         <td class="hide-sm">${INVOICE[r.invoiceStatus] ? status(...INVOICE[r.invoiceStatus]) : esc(r.invoiceStatus || '')}</td></tr>`).join('')}</tbody></table>
       ${rows.length > shown ? `<div style="text-align:center;padding:12px"><button class="btn sm" id="o-more">Show ${int(Math.min(100, rows.length - shown))} more of ${int(rows.length - shown)}</button></div>` : ''}`
       : '<div class="empty">No orders match.</div>';
@@ -585,6 +589,8 @@ function renderDetail() {
     const more = $('#o-more'); if (more) more.onclick = () => { shown += 100; draw(); };
   };
   $('#o-q').oninput = () => { shown = 100; draw(); };
+  const oc = $('#o-chips');
+  if (oc) oc.querySelectorAll('[data-f]').forEach((b) => { b.onclick = () => { only = b.dataset.f; oc.querySelectorAll('[data-f]').forEach((x) => { x.classList.toggle('on', x === b); x.setAttribute('aria-pressed', x === b); }); shown = 100; draw(); }; });
   draw();
 }
 
@@ -662,6 +668,7 @@ function renderInvoice() {
   $('#main').innerHTML = `${backBar()}
     <section class="section" style="margin-top:16px" aria-labelledby="h-inv">
       <div class="section-head"><h2 id="h-inv">To invoice</h2><span class="sub">Confirmed sales orders Odoo marks "To invoice", ordered since ${dmy(d.from)} · ${esc(d.currency.name)}, excl. tax</span></div>
+      ${d.nothingLeft.length ? `<div class="banner">${int(d.nothingLeft.length)} order${d.nothingLeft.length === 1 ? '' : 's'} show "To invoice" in Odoo but have nothing left to bill (only a down payment still to be deducted), so they're left out: ${d.nothingLeft.slice(0, 12).map((o) => odooLink('sale.order', o.id, o.name)).join(', ')}${d.nothingLeft.length > 12 ? ' …' : ''}</div>` : ''}
       ${d.older.count ? `<div class="banner">${int(d.older.count)} order${d.older.count === 1 ? '' : 's'} from before ${dmy(d.from)} (${moneyFull(d.older.toInvoice)}) still show as "To invoice" in Odoo. They're left out of the totals; pick <b>Before ${dmy(d.from)}</b> below to check them.</div>` : ''}
       <div class="tiles detail">
         ${tile('Still to invoice', `<span title="${moneyFull(t.toInvoice)}">${money(t.toInvoice)}</span>`, `<span>${d.hasAmounts ? 'untaxed amount left on the lines' : 'order totals'}</span>`)}

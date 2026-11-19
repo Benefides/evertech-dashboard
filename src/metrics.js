@@ -36,6 +36,9 @@ function topN(map, n, valueKey = 'value') {
 // one filter slice: company, sales team, salesperson
 // "To invoice" counts orders dated from this day (default: 1 Jan of the current year); older ones are listed separately to check in Odoo
 const toInvoiceFrom = (today) => process.env.TO_INVOICE_FROM || today.slice(0, 4) + '-01-01';
+// an order Odoo marks "to invoice" that has something positive left to bill (not just a down payment waiting to be deducted)
+const isNoCost = (o) => o.amount > 0 && (o.margin || 0) >= o.amount - 0.5;
+const billable = (o) => (o.toInvoice ?? o.amount) > 0.005;
 const sliceOf = (f) => (r) => (!f.company || r.companyId === f.company) && (!f.team || r.teamId === f.team) && (!f.user || r.userId === f.user);
 
 function compute(ds, f) {
@@ -58,11 +61,14 @@ function compute(ds, f) {
   const revenue = sum(cur, (o) => o.amount), revenuePrev = sum(prev, (o) => o.amount);
   // margin = Odoo's sale.order margin (Sales Margin module): untaxed amount minus product cost; null when Odoo doesn't have it
   const margin = (arr) => (ds.hasMargin ? sum(arr, (o) => o.margin || 0) : null);
+  // orders whose margin is the whole sale: no cost on their lines in Odoo, so they overstate margin
+  const noCost = (arr) => { const n = ds.hasMargin ? arr.filter(isNoCost) : []; return { count: n.length, amount: sum(n, (o) => o.amount) }; };
   // year to date: 1 Jan of the period-end year up to the period end, compared with the same dates last year
   const ytdFrom = to.slice(0, 4) + '-01-01', ytdPrevFrom = addMonths(ytdFrom, -12), ytdPrevTo = addMonths(to, -12);
   const ytd = soldIn(ytdFrom, to), ytdPrev = soldIn(ytdPrevFrom, ytdPrevTo);
   const tiFrom = toInvoiceFrom(today);
-  const toInvoiceAll = sold.filter((o) => o.invoiceStatus === 'to invoice');
+  const toInvoiceAll = sold.filter((o) => o.invoiceStatus === 'to invoice' && billable(o));
+  const nothingLeft = sold.filter((o) => o.invoiceStatus === 'to invoice' && !billable(o)).length;
   const toInvoice = toInvoiceAll.filter((o) => salesDate(o) >= tiFrom), toInvoiceOld = toInvoiceAll.filter((o) => salesDate(o) < tiFrom);
 
   const leads = ds.leads.filter(slice);
@@ -78,18 +84,19 @@ function compute(ds, f) {
   const kpis = {
     revenue: { value: revenue, prev: revenuePrev },
     orders: { value: cur.length, prev: prev.length },
-    margin: { value: margin(cur), prev: margin(prev), revenue, revenuePrev },
+    margin: { value: margin(cur), prev: margin(prev), revenue, revenuePrev, noCost: noCost(cur) },
     // GP growth = (this month's margin − previous month's margin) / previous month's margin; "this month" = the month the period ends in, up to its end
     gpGrowth: (() => {
       const m0 = to.slice(0, 7) + '-01', p0 = addMonths(m0, -1), p1 = addDays(m0, -1);
       const c = margin(soldIn(m0, to)), p = margin(soldIn(p0, p1));
-      return { value: c == null || !p ? null : (c - p) / Math.abs(p), cur: c, prev: p, month: m0.slice(0, 7), prevMonth: p0.slice(0, 7) };
+      return { value: c == null || !p ? null : (c - p) / Math.abs(p), cur: c, prev: p, month: m0.slice(0, 7), prevMonth: p0.slice(0, 7),
+        noCost: noCost(soldIn(m0, to)).count + noCost(soldIn(p0, p1)).count };
     })(),
     ytd: { from: ytdFrom, to, prevFrom: ytdPrevFrom, prevTo: ytdPrevTo,
       revenue: sum(ytd, (o) => o.amount), revenuePrev: sum(ytdPrev, (o) => o.amount),
-      margin: margin(ytd), marginPrev: margin(ytdPrev), orders: ytd.length, ordersPrev: ytdPrev.length },
+      margin: margin(ytd), marginPrev: margin(ytdPrev), orders: ytd.length, ordersPrev: ytdPrev.length, noCost: noCost(ytd) },
     toInvoice: { value: sum(toInvoice, (o) => o.toInvoice ?? o.amount), count: toInvoice.length, from: tiFrom,
-      olderCount: toInvoiceOld.length, olderValue: sum(toInvoiceOld, (o) => o.toInvoice ?? o.amount) },
+      olderCount: toInvoiceOld.length, olderValue: sum(toInvoiceOld, (o) => o.toInvoice ?? o.amount), nothingLeft },
     pipeline: { value: sum(open, (l) => l.expected), weighted: sum(open, (l) => (l.expected * l.probability) / 100), count: open.length },
     won: { value: sum(won, (l) => l.expected), count: won.length, prev: sum(wonPrev, (l) => l.expected), prevCount: wonPrev.length },
     winRate: { value: rate(won, lost), prev: rate(wonPrev, lostPrev), won: won.length, lost: lost.length },
@@ -258,12 +265,13 @@ function details(ds, f, range) {
   const revenue = sum(sold, (o) => o.amount);
   return {
     range, from, to, hasMargin: !!ds.hasMargin, salesDate: SALES_DATE,
-    total: { revenue, margin: ds.hasMargin ? sum(sold, (o) => o.margin || 0) : null, orders: sold.length, customers: new Set(sold.map((o) => o.partnerId)).size },
+    total: { revenue, margin: ds.hasMargin ? sum(sold, (o) => o.margin || 0) : null, orders: sold.length, customers: new Set(sold.map((o) => o.partnerId)).size,
+      noCost: ds.hasMargin ? sold.filter(isNoCost).length : 0, noCostAmount: ds.hasMargin ? sum(sold.filter(isNoCost), (o) => o.amount) : 0 },
     byMonth,
     bySalesperson: group((o) => o.userId, (o) => o.user),
     byCustomer: group((o) => o.partnerId, (o) => o.partner),
     byTeam: group((o) => o.teamId, (o) => teams[o.teamId] || 'No team'),
-    orders: sold.map((o) => ({ id: o.id, name: o.name, date: salesDate(o), partner: o.partner, user: o.user, team: teams[o.teamId] || '',
+    orders: sold.map((o) => ({ id: o.id, name: o.name, date: salesDate(o), noCost: ds.hasMargin && isNoCost(o), partner: o.partner, user: o.user, team: teams[o.teamId] || '',
       company: companies[o.companyId] || '', amount: o.amount, margin: mg(o), invoiceStatus: o.invoiceStatus })),
   };
 }
@@ -275,7 +283,9 @@ function invoiceDetails(ds, f) {
   const linesBy = new Map();
   for (const l of ds.invoiceLines || []) { if (!linesBy.has(l.orderId)) linesBy.set(l.orderId, []); linesBy.get(l.orderId).push(l); }
   const from = toInvoiceFrom(today);
-  const all = ds.orders.filter(sliceOf(f)).filter((o) => o.state === 'sale' && o.invoiceStatus === 'to invoice').map((o) => {
+  const marked = ds.orders.filter(sliceOf(f)).filter((o) => o.state === 'sale' && o.invoiceStatus === 'to invoice');
+  const nothingLeft = marked.filter((o) => !billable(o)).map((o) => ({ id: o.id, name: o.name, partner: o.partner }));
+  const all = marked.filter(billable).map((o) => {
     const ls = linesBy.get(o.id) || [];
     return { id: o.id, name: o.name, date: salesDate(o), older: salesDate(o) < from, age: daysBetween(salesDate(o), today), partner: o.partner, user: o.user, team: teams[o.teamId] || '',
       amount: o.amount, invoiced: ds.hasInvoiceAmounts ? sum(ls, (l) => l.invoicedAmount || 0) : null, toInvoice: o.toInvoice ?? o.amount,
@@ -290,7 +300,7 @@ function invoiceDetails(ds, f) {
   const ages = [['0–30 days', 0, 30], ['31–60 days', 31, 60], ['61–90 days', 61, 90], ['Over 90 days', 91, Infinity]]
     .map(([name, a, b]) => { const rs = rows.filter((r) => r.age >= a && r.age <= b); return { name, value: sum(rs, (r) => r.toInvoice), orders: rs.length }; });
   return {
-    hasAmounts: !!ds.hasInvoiceAmounts, today, from, salesDate: SALES_DATE, older: { count: old.length, toInvoice: sum(old, (r) => r.toInvoice) },
+    hasAmounts: !!ds.hasInvoiceAmounts, today, from, salesDate: SALES_DATE, nothingLeft, older: { count: old.length, toInvoice: sum(old, (r) => r.toInvoice) },
     total: { toInvoice: sum(rows, (r) => r.toInvoice), orders: rows.length, oldest: rows.length ? rows[0].age : null,
       over60: sum(rows.filter((r) => r.age > 60), (r) => r.toInvoice), over60Count: rows.filter((r) => r.age > 60).length },
     ages, bySalesperson: group((r) => r.user), byCustomer: group((r) => r.partner), orders: all,
