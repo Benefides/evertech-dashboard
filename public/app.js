@@ -149,7 +149,7 @@ function renderCodeStep(email, minutes, err) {
   app.innerHTML = loginBox(`<p>We sent a code to <b>${esc(email)}</b>. It's valid for ${int(minutes)} minutes.</p>
     <input name="code" class="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}" placeholder="••••••" aria-label="6-digit code" required autofocus>${errBox(err)}
     <button class="btn primary" id="go">Sign in</button>
-    <div class="login-links"><button type="button" class="link" id="again">Send a new code</button><button type="button" class="link" id="other">Use a different email</button></div>`);
+    <div class="login-links"><button type="button" class="textlink" id="again">Send a new code</button><button type="button" class="textlink" id="other">Use a different email</button></div>`);
   const input = $('#lf').code;
   input.oninput = () => { input.value = input.value.replace(/\D/g, '').slice(0, 6); if (input.value.length === 6) $('#lf').requestSubmit(); };
   $('#lf').onsubmit = async (e) => {
@@ -298,6 +298,7 @@ function renderMain() {
   src.textContent = (META.source === 'demo' ? 'Demo data' : 'Live from Odoo') + ' · updated ' + ago(d.fetchedAt);
   src.title = new Date(d.fetchedAt).toLocaleString();
   const vs = vsLabel();
+  const byDate = d.salesDate === 'confirmed' ? 'order date' : 'creation date';
   const months = d.revByMonth;
   const tg = d.target, tt = tg.total;
   const y = k.ytd, ytdLabel = `1 Jan – ${dmy(y.to).replace(/ \d{4}$/, '')} vs ${Number(y.to.slice(0, 4)) - 1}`;
@@ -318,7 +319,7 @@ function renderMain() {
     <div class="period-note" style="margin-top:12px">${dmy(p.from)} – ${dmy(p.to)} (${p.days} days) · compared with ${dmy(p.prevFrom)} – ${dmy(p.prevTo)} · amounts in ${esc(d.currency.name)}, excl. tax</div>
 
     <section class="section" aria-labelledby="h-sales">
-      <div class="section-head"><h2 id="h-sales">Sales</h2><span class="sub">Confirmed sales orders, by order date</span></div>
+      <div class="section-head"><h2 id="h-sales">Sales</h2><span class="sub">Confirmed sales orders, by ${byDate}</span></div>
       <div class="tiles">
         <a class="tile hero link" href="${per}" title="Show the orders behind this number"><div class="k">Sales <span class="go" aria-hidden="true">›</span></div><div class="v" title="${moneyFull(k.revenue.value)}">${money(k.revenue.value)}</div>
           <div class="row"><div class="d">${delta(k.revenue.value, k.revenue.prev)} <span>${vs}</span></div><div id="spark-rev"></div></div></a>
@@ -531,7 +532,7 @@ function renderDetail() {
       </div>
     </div>
     <section class="section" style="margin-top:16px" aria-labelledby="h-det">
-      <div class="section-head"><h2 id="h-det">Sales details</h2><span class="sub">${dmy(d.from)} – ${dmy(d.to)} · confirmed sales orders by order date · ${esc(d.currency.name)}, excl. tax</span></div>
+      <div class="section-head"><h2 id="h-det">Sales details</h2><span class="sub">${dmy(d.from)} – ${dmy(d.to)} · confirmed sales orders by ${d.salesDate === 'confirmed' ? 'order date' : 'creation date'} · ${esc(d.currency.name)}, excl. tax</span></div>
       <div class="tiles detail">
         ${tile('Sales', `<span title="${moneyFull(t.revenue)}">${money(t.revenue)}</span>`, `<span>${int(t.orders)} orders</span>`)}
         ${tile('Margin', t.margin == null ? '–' : `<span title="${moneyFull(t.margin)}">${money(t.margin)}</span>`, t.margin == null ? '<span>needs the Sales Margin module in Odoo</span>' : `<span>${t.revenue ? pct(t.margin / t.revenue) : '–'} of sales</span>`)}
@@ -666,10 +667,10 @@ function renderInvoice() {
         ${tile('Still to invoice', `<span title="${moneyFull(t.toInvoice)}">${money(t.toInvoice)}</span>`, `<span>${d.hasAmounts ? 'untaxed amount left on the lines' : 'order totals'}</span>`)}
         ${tile('Orders', int(t.orders), '<span>waiting for an invoice</span>')}
         ${tile('Over 60 days old', money(t.over60), t.over60Count ? status('serious', `${int(t.over60Count)} order${t.over60Count === 1 ? '' : 's'}`) : status('good', 'None'))}
-        ${tile('Oldest order', t.oldest == null ? '–' : `${int(t.oldest)}<small>days</small>`, '<span>since the order date</span>')}
+        ${tile('Oldest order', t.oldest == null ? '–' : `${int(t.oldest)}<small>days</small>`, `<span>since the order was ${d.salesDate === 'confirmed' ? 'confirmed' : 'created'}</span>`)}
       </div>
       <div class="grid g3" style="margin-top:14px">
-        <div class="card"><div class="card-head"><div><h3>By age</h3><p>Days since the order date</p></div></div><div class="table-wrap">${breakdownTable(d.ages.filter((a) => a.orders), 'Age', 10, { valueLabel: 'To invoice' })}</div></div>
+        <div class="card"><div class="card-head"><div><h3>By age</h3><p>Days since the order was ${d.salesDate === 'confirmed' ? 'confirmed' : 'created'}</p></div></div><div class="table-wrap">${breakdownTable(d.ages.filter((a) => a.orders), 'Age', 10, { valueLabel: 'To invoice' })}</div></div>
         <div class="card"><div class="card-head"><div><h3>By salesperson</h3></div></div><div class="table-wrap">${breakdownTable(d.bySalesperson, 'Salesperson', 10, { valueLabel: 'To invoice' })}</div></div>
         <div class="card"><div class="card-head"><div><h3>By customer</h3><p>Top 10</p></div></div><div class="table-wrap">${breakdownTable(d.byCustomer, 'Customer', 10, { valueLabel: 'To invoice' })}</div></div>
       </div>
@@ -688,7 +689,7 @@ function renderInvoice() {
     match: (r) => `${r.name} ${r.partner} ${r.user} ${r.team}`,
     cols: [
       { k: 'name', label: 'Order', cls: 'mono', asc: 1, html: (r) => odooLink('sale.order', r.id, r.name), sort: (r) => r.name },
-      { k: 'date', label: 'Order date', html: (r) => dmy(r.date), sort: (r) => r.date },
+      { k: 'date', label: d.salesDate === 'confirmed' ? 'Order date' : 'Created', html: (r) => dmy(r.date), sort: (r) => r.date },
       { k: 'age', label: 'Age', html: (r) => ageChip(r.age), sort: (r) => r.age },
       { k: 'partner', label: 'Customer', cls: 'name', asc: 1, html: (r) => esc(r.partner), sort: (r) => r.partner },
       { k: 'user', label: 'Salesperson', cls: 'hide-sm', asc: 1, html: (r) => esc(r.user), sort: (r) => r.user },

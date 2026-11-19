@@ -1,6 +1,9 @@
 // Turns the dataset into everything the dashboard shows, for one filter slice:
 // period (from..to, compared with the previous period of the same length), company, sales team, salesperson.
 const AMC_MONTHS = Number(process.env.AMC_TERM_MONTHS || 12);
+// which date puts a sales order in a period: 'created' (when it was entered — Evertech enters the SO when the order arrives) or 'confirmed' (Odoo's order date)
+const SALES_DATE = process.env.SALES_DATE === 'confirmed' ? 'confirmed' : 'created';
+const salesDate = (o) => (SALES_DATE === 'confirmed' ? o.dateOrder : o.created || o.dateOrder);
 const AMC_FROM = process.env.AMC_EXPIRY_FROM || 'created'; // 'created' (order creation date, as requested) or 'confirmed'
 const licenses = require('./licenses');
 
@@ -50,7 +53,7 @@ function compute(ds, f) {
 
   const orders = ds.orders.filter(slice);
   const sold = orders.filter((o) => o.state === 'sale');
-  const soldIn = (a, b) => sold.filter((o) => inRange(o.dateOrder, a, b));
+  const soldIn = (a, b) => sold.filter((o) => inRange(salesDate(o), a, b));
   const cur = soldIn(from, to), prev = soldIn(prevFrom, prevTo);
   const revenue = sum(cur, (o) => o.amount), revenuePrev = sum(prev, (o) => o.amount);
   // margin = Odoo's sale.order margin (Sales Margin module): untaxed amount minus product cost; null when Odoo doesn't have it
@@ -60,7 +63,7 @@ function compute(ds, f) {
   const ytd = soldIn(ytdFrom, to), ytdPrev = soldIn(ytdPrevFrom, ytdPrevTo);
   const tiFrom = toInvoiceFrom(today);
   const toInvoiceAll = sold.filter((o) => o.invoiceStatus === 'to invoice');
-  const toInvoice = toInvoiceAll.filter((o) => o.dateOrder >= tiFrom), toInvoiceOld = toInvoiceAll.filter((o) => o.dateOrder < tiFrom);
+  const toInvoice = toInvoiceAll.filter((o) => salesDate(o) >= tiFrom), toInvoiceOld = toInvoiceAll.filter((o) => salesDate(o) < tiFrom);
 
   const leads = ds.leads.filter(slice);
   const open = leads.filter((l) => l.status === 'open');
@@ -99,11 +102,11 @@ function compute(ds, f) {
   const months = monthsEnding(to, 12);
   const mIdx = Object.fromEntries(months.map((m, i) => [m, i]));
   const revByMonth = months.map((m) => ({ month: m, value: 0, margin: ds.hasMargin ? 0 : null, orders: 0 }));
-  for (const o of sold) { const i = mIdx[ym(o.dateOrder)]; if (i != null) { revByMonth[i].value += o.amount; if (ds.hasMargin) revByMonth[i].margin += o.margin || 0; revByMonth[i].orders++; } }
+  for (const o of sold) { const i = mIdx[ym(salesDate(o))]; if (i != null) { revByMonth[i].value += o.amount; if (ds.hasMargin) revByMonth[i].margin += o.margin || 0; revByMonth[i].orders++; } }
   // same months one year earlier, for the tooltip comparison
   const lastYear = months.map((m) => addMonths(m + '-01', -12).slice(0, 7));
   const lyIdx = Object.fromEntries(lastYear.map((m, i) => [m, i]));
-  for (const o of sold) { const i = lyIdx[ym(o.dateOrder)]; if (i != null) revByMonth[i].lastYear = (revByMonth[i].lastYear || 0) + o.amount; }
+  for (const o of sold) { const i = lyIdx[ym(salesDate(o))]; if (i != null) revByMonth[i].lastYear = (revByMonth[i].lastYear || 0) + o.amount; }
   const wonLost = months.map((m) => ({ month: m, won: 0, lost: 0, wonValue: 0 }));
   for (const l of leads) {
     if (!l.closed || (l.status !== 'won' && l.status !== 'lost')) continue;
@@ -220,7 +223,7 @@ function compute(ds, f) {
 
   return {
     period: { from, to, prevFrom, prevTo, days: len, compare: f.compare === 'ly' ? 'ly' : 'prev' }, today,
-    kpis, revByMonth, wonLost, hasMargin: !!ds.hasMargin,
+    kpis, revByMonth, wonLost, hasMargin: !!ds.hasMargin, salesDate: SALES_DATE,
     topCustomers: topN(cust, 11).map((c) => (ds.hasMargin ? c : { ...c, margin: null })),
     salespeople, stages: stageRows,
     sources: [...src.values()].sort((a, b) => b.value - a.value),
@@ -237,8 +240,8 @@ function details(ds, f, range) {
   const from = range === 'ytd' ? f.to.slice(0, 4) + '-01-01' : f.from, to = f.to;
   const teams = Object.fromEntries(ds.teams.map((t) => [t.id, t.name]));
   const companies = Object.fromEntries(ds.companies.map((c) => [c.id, c.name]));
-  const sold = ds.orders.filter(sliceOf(f)).filter((o) => o.state === 'sale' && inRange(o.dateOrder, from, to))
-    .sort((a, b) => b.dateOrder.localeCompare(a.dateOrder) || b.amount - a.amount);
+  const sold = ds.orders.filter(sliceOf(f)).filter((o) => o.state === 'sale' && inRange(salesDate(o), from, to))
+    .sort((a, b) => salesDate(b).localeCompare(salesDate(a)) || b.amount - a.amount);
   const mg = (o) => (ds.hasMargin ? o.margin || 0 : null);
   const group = (key, name) => {
     const g = new Map();
@@ -251,16 +254,16 @@ function details(ds, f, range) {
   const byMonth = [];
   for (let m = from.slice(0, 7); m <= to.slice(0, 7); m = addMonths(m + '-01', 1).slice(0, 7)) byMonth.push({ month: m, value: 0, margin: ds.hasMargin ? 0 : null, orders: 0 });
   const mIdx = Object.fromEntries(byMonth.map((r, i) => [r.month, i]));
-  for (const o of sold) { const r = byMonth[mIdx[ym(o.dateOrder)]]; r.value += o.amount; if (ds.hasMargin) r.margin += o.margin || 0; r.orders++; }
+  for (const o of sold) { const r = byMonth[mIdx[ym(salesDate(o))]]; r.value += o.amount; if (ds.hasMargin) r.margin += o.margin || 0; r.orders++; }
   const revenue = sum(sold, (o) => o.amount);
   return {
-    range, from, to, hasMargin: !!ds.hasMargin,
+    range, from, to, hasMargin: !!ds.hasMargin, salesDate: SALES_DATE,
     total: { revenue, margin: ds.hasMargin ? sum(sold, (o) => o.margin || 0) : null, orders: sold.length, customers: new Set(sold.map((o) => o.partnerId)).size },
     byMonth,
     bySalesperson: group((o) => o.userId, (o) => o.user),
     byCustomer: group((o) => o.partnerId, (o) => o.partner),
     byTeam: group((o) => o.teamId, (o) => teams[o.teamId] || 'No team'),
-    orders: sold.map((o) => ({ id: o.id, name: o.name, date: o.dateOrder, partner: o.partner, user: o.user, team: teams[o.teamId] || '',
+    orders: sold.map((o) => ({ id: o.id, name: o.name, date: salesDate(o), partner: o.partner, user: o.user, team: teams[o.teamId] || '',
       company: companies[o.companyId] || '', amount: o.amount, margin: mg(o), invoiceStatus: o.invoiceStatus })),
   };
 }
@@ -274,7 +277,7 @@ function invoiceDetails(ds, f) {
   const from = toInvoiceFrom(today);
   const all = ds.orders.filter(sliceOf(f)).filter((o) => o.state === 'sale' && o.invoiceStatus === 'to invoice').map((o) => {
     const ls = linesBy.get(o.id) || [];
-    return { id: o.id, name: o.name, date: o.dateOrder, older: o.dateOrder < from, age: daysBetween(o.dateOrder, today), partner: o.partner, user: o.user, team: teams[o.teamId] || '',
+    return { id: o.id, name: o.name, date: salesDate(o), older: salesDate(o) < from, age: daysBetween(salesDate(o), today), partner: o.partner, user: o.user, team: teams[o.teamId] || '',
       amount: o.amount, invoiced: ds.hasInvoiceAmounts ? sum(ls, (l) => l.invoicedAmount || 0) : null, toInvoice: o.toInvoice ?? o.amount,
       lines: ls.filter((l) => !ds.hasInvoiceAmounts || l.toInvoice || l.toInvoiceQty) };
   }).sort((a, b) => b.age - a.age);
@@ -287,7 +290,7 @@ function invoiceDetails(ds, f) {
   const ages = [['0–30 days', 0, 30], ['31–60 days', 31, 60], ['61–90 days', 61, 90], ['Over 90 days', 91, Infinity]]
     .map(([name, a, b]) => { const rs = rows.filter((r) => r.age >= a && r.age <= b); return { name, value: sum(rs, (r) => r.toInvoice), orders: rs.length }; });
   return {
-    hasAmounts: !!ds.hasInvoiceAmounts, today, from, older: { count: old.length, toInvoice: sum(old, (r) => r.toInvoice) },
+    hasAmounts: !!ds.hasInvoiceAmounts, today, from, salesDate: SALES_DATE, older: { count: old.length, toInvoice: sum(old, (r) => r.toInvoice) },
     total: { toInvoice: sum(rows, (r) => r.toInvoice), orders: rows.length, oldest: rows.length ? rows[0].age : null,
       over60: sum(rows.filter((r) => r.age > 60), (r) => r.toInvoice), over60Count: rows.filter((r) => r.age > 60).length },
     ages, bySalesperson: group((r) => r.user), byCustomer: group((r) => r.partner), orders: all,
@@ -302,7 +305,7 @@ function targetDetails(ds, f) {
   for (const o of ds.orders) {
     if (!o.opportunityId || o.state === 'cancel') continue;
     if (!soByLead.has(o.opportunityId)) soByLead.set(o.opportunityId, []);
-    soByLead.get(o.opportunityId).push({ id: o.id, name: o.name, date: o.dateOrder, amount: o.amount, state: o.state });
+    soByLead.get(o.opportunityId).push({ id: o.id, name: o.name, date: salesDate(o), amount: o.amount, state: o.state });
   }
   const row = (l) => ({ id: l.id, name: l.name, partner: l.partner, user: l.user, stage: l.stage, probability: l.probability, expected: l.expected,
     created: l.created, deadline: l.deadline, closed: l.closed, status: l.status === 'open' && l.deadline && l.deadline < today ? 'late' : l.status,

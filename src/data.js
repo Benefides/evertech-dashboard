@@ -46,7 +46,7 @@ async function fromOdoo() {
   }
 
   const lineFields = await odoo.pick('sale.order.line', ['order_id', 'product_id', 'name', 'price_subtotal', 'product_uom_qty', 'currency_id', 'display_type']);
-  const lineDomain = [['order_id.state', 'in', ['sale', 'done']], ['order_id.date_order', '>=', from]];
+  const lineDomain = [['order_id.state', 'in', ['sale', 'done']], '|', ['order_id.date_order', '>=', from], ['order_id.create_date', '>=', from]];
   if (lineFields.includes('display_type')) lineDomain.push(['display_type', '=', false]);
   const lineRaw = await odoo.readAll('sale.order.line', lineDomain, lineFields, ctx);
   const amcByLine = new Set(lineRaw.filter((l) => isAmcText(m2o(l.product_id).name) || isAmcText(l.name)).map((l) => m2o(l.order_id).id));
